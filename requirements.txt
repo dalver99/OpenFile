@@ -1,0 +1,6 @@
+python-chess
+python-dotenv
+requests
+psycopg[binary]
+python-telegram-bot
+cairosvg
