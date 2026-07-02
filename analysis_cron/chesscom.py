@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -29,9 +28,6 @@ class ChessComGame:
     time_class: str | None
     time_control: str | None
     rules: str
-    player_color: str
-    player_result: str
-    opponent_username: str
     white: dict[str, Any]
     black: dict[str, Any]
     raw: dict[str, Any]
@@ -81,29 +77,6 @@ class ChessComClient:
 
         return sorted(games, key=lambda game: game.end_time or 0, reverse=True)
 
-    def lost_games(self, username: str, archive_months: int) -> list[ChessComGame]:
-        return [
-            game
-            for game in self.recent_games(username, archive_months)
-            if game.rules == "chess" and game.player_result in LOSS_RESULTS and game.pgn
-        ]
-
-    def choose_random_lost_game(
-        self,
-        username: str,
-        archive_months: int,
-        excluded_urls: set[str] | None = None,
-    ) -> ChessComGame | None:
-        excluded_urls = excluded_urls or set()
-        candidates = [
-            game
-            for game in self.lost_games(username, archive_months)
-            if game.url not in excluded_urls
-        ]
-        if not candidates:
-            return None
-        return random.choice(candidates)
-
     def _parse_game(self, username: str, raw_game: dict[str, Any]) -> ChessComGame | None:
         white = raw_game.get("white") or {}
         black = raw_game.get("black") or {}
@@ -111,15 +84,8 @@ class ChessComClient:
         white_username = str(white.get("username", "")).lower()
         black_username = str(black.get("username", "")).lower()
 
-        if white_username == username_lower:
-            player_color = "white"
-            player = white
-            opponent = black
-        elif black_username == username_lower:
-            player_color = "black"
-            player = black
-            opponent = white
-        else:
+        # Only keep games the tracked user actually played in.
+        if username_lower not in (white_username, black_username):
             return None
 
         return ChessComGame(
@@ -129,9 +95,6 @@ class ChessComClient:
             time_class=raw_game.get("time_class"),
             time_control=raw_game.get("time_control"),
             rules=raw_game.get("rules", ""),
-            player_color=player_color,
-            player_result=player.get("result", ""),
-            opponent_username=opponent.get("username", ""),
             white=white,
             black=black,
             raw=raw_game,

@@ -4,8 +4,15 @@ import requests
 
 
 class StockfishClient:
-    def __init__(self, base_url: str, api_key: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        *,
+        analyze_game_timeout_sec: int = 20 * 60,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
+        self._analyze_game_timeout_sec = analyze_game_timeout_sec
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -23,7 +30,7 @@ class StockfishClient:
         response = self.session.post(
             f"{self.base_url}/analyze-game",
             json={"pgn": pgn, "depth": depth, "p": multipv},
-            timeout=600,
+            timeout=self._analyze_game_timeout_sec,
         )
         response.raise_for_status()
         return response.json()

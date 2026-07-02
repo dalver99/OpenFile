@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from collections.abc import Callable
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from psycopg import Connection
@@ -26,10 +27,19 @@ def list_active_players(conn: Connection, target_user_id: int) -> list[dict[str,
         return list(cur.fetchall())
 
 
-def acquire_daily_run(conn: Connection, run_date: date, player_id: int) -> str:
+def acquire_daily_run(
+    conn: Connection,
+    run_date: date,
+    player_id: int,
+    stale_minutes: int = 60,
+) -> str:
     """
-    Claim or resume a daily run row.
-    Returns: proceed | skip_done | skip_running
+    Claim a run row for (run_date, player_id). Scheduling frequency is left to cron / the host.
+
+    Returns:
+        proceed — started or restarted a run
+        proceed_reclaimed_stale — was stuck ``running``, lock reclaimed
+        skip_running — another invocation still holds an active ``running`` row (not stale)
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -41,12 +51,28 @@ def acquire_daily_run(conn: Connection, run_date: date, player_id: int) -> str:
         )
         row = cur.fetchone()
 
-    if row:
-        status = row[0]
-        if status in ("completed", "skipped", "no_candidate"):
-            return "skip_done"
-        if status == "running":
-            return "skip_running"
+    if row and row[0] == "running":
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE analysis_runs
+                SET status = 'running',
+                    reason = NULL,
+                    selected_game_id = NULL,
+                    started_at = now(),
+                    finished_at = NULL,
+                    metadata = COALESCE(metadata, '{}'::jsonb)
+                        || '{"reclaimed_stale_lock": true}'::jsonb
+                WHERE run_date = %s AND player_id = %s
+                  AND status = 'running'
+                  AND started_at < now() - (%s * interval '1 minute')
+                """,
+                (run_date, player_id, stale_minutes),
+            )
+            reclaimed = cur.rowcount > 0
+        if reclaimed:
+            return "proceed_reclaimed_stale"
+        return "skip_running"
 
     with conn.cursor() as cur:
         if row is None:
@@ -57,7 +83,7 @@ def acquire_daily_run(conn: Connection, run_date: date, player_id: int) -> str:
                 """,
                 (run_date, player_id),
             )
-        elif row[0] == "failed":
+        else:
             cur.execute(
                 """
                 UPDATE analysis_runs
@@ -71,8 +97,6 @@ def acquire_daily_run(conn: Connection, run_date: date, player_id: int) -> str:
                 """,
                 (run_date, player_id),
             )
-        else:
-            return "skip_running"
 
     return "proceed"
 
@@ -102,17 +126,69 @@ def finish_analysis_run(
         )
 
 
+def newest_stored_game_end(conn: Connection, player_id: int) -> datetime | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT MAX(g.end_time)
+            FROM player_games pg
+            INNER JOIN chesscom_games g ON g.id = pg.game_id
+            WHERE pg.player_id = %s
+              AND g.end_time IS NOT NULL
+            """,
+            (player_id,),
+        )
+        row = cur.fetchone()
+    if row is None or row[0] is None:
+        return None
+    end = row[0]
+    if isinstance(end, datetime) and end.tzinfo is None:
+        return end.replace(tzinfo=timezone.utc)
+    return end
+
+
 def sync_recent_games(
     conn: Connection,
     client: ChessComClient,
     player_id: int,
     username: str,
     archive_months: int,
+    max_sync_games: int,
+    skip_fetch_if_fresh_within_days: int,
+    log: Callable[[str], None],
 ) -> int:
+    """
+    Upsert recent Chess.com games. Skips HTTP fetch if the newest game already stored
+    for this player ended within skip_fetch_if_fresh_within_days (0 = always fetch).
+    """
+    if skip_fetch_if_fresh_within_days > 0:
+        now = datetime.now(timezone.utc)
+        threshold = now - timedelta(days=skip_fetch_if_fresh_within_days)
+        newest = newest_stored_game_end(conn, player_id)
+        if newest is not None and newest >= threshold:
+            log(
+                f"skip Chess.com sync player_id={player_id}: newest stored game ended "
+                f"{newest.isoformat()} (within last {skip_fetch_if_fresh_within_days} days)"
+            )
+            return 0
+        if newest is not None:
+            log(
+                f"Chess.com sync player_id={player_id}: newest stored game "
+                f"{newest.isoformat()} is older than fresh window (before {threshold.isoformat()}); fetching"
+            )
+        else:
+            log(f"Chess.com sync player_id={player_id}: no stored games; fetching")
+
     games = client.recent_games(username, archive_months)
-    for g in games:
+    if max_sync_games > 0:
+        games = games[:max_sync_games]
+    total = len(games)
+    for i, g in enumerate(games):
         upsert_game_and_players(conn, player_id, username, g)
-    return len(games)
+        if total and (i + 1) % 25 == 0:
+            log(f"Chess.com sync player_id={player_id}: upserted {i + 1}/{total} games")
+    log(f"Chess.com sync player_id={player_id}: upserted {total} games")
+    return total
 
 
 def upsert_game_and_players(

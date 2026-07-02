@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -12,7 +13,15 @@ from analysis_cron.runner import run_daily_analysis  # noqa: E402
 
 
 def main() -> int:
-    result = run_daily_analysis(Settings.from_env())
+    parser = argparse.ArgumentParser(description="Sync Chess.com games and analyze one random unanalyzed loss.")
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=None,
+        help="Stockfish depth for this run only (overrides STOCKFISH_DEPTH in .env, still capped by server limit).",
+    )
+    args = parser.parse_args()
+    result = run_daily_analysis(Settings.from_env(), stockfish_depth=args.depth)
     print(json.dumps(result, indent=2, sort_keys=True))
     if result.get("status") == "error":
         return 1

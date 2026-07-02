@@ -76,13 +76,19 @@ def classify_tag(board: chess.Board, best_line: dict[str, Any]) -> str:
     return "strategic"
 
 
-def is_quality_puzzle(move_row: dict[str, Any]) -> bool:
+def is_quality_puzzle(
+    move_row: dict[str, Any],
+    *,
+    min_centipawn_loss: int = 150,
+    min_top_score_gap_cp: int = 15,
+) -> bool:
     cp_loss = move_row.get("centipawn_loss")
-    try:
-        if cp_loss is None or int(cp_loss) < 150:
+    if min_centipawn_loss > 0:
+        try:
+            if cp_loss is None or int(cp_loss) < min_centipawn_loss:
+                return False
+        except (TypeError, ValueError):
             return False
-    except (TypeError, ValueError):
-        return False
 
     top_moves = move_row.get("top_moves")
     if not isinstance(top_moves, list) or len(top_moves) < 2:
@@ -102,7 +108,9 @@ def is_quality_puzzle(move_row: dict[str, Any]) -> bool:
     if s1 is None or s2 is None:
         return False
 
-    return (s1 - s2) >= 80
+    if min_top_score_gap_cp <= 0:
+        return True
+    return (s1 - s2) >= min_top_score_gap_cp
 
 
 def extract_solution_uci(top_moves: list[dict[str, Any]]) -> str | None:
