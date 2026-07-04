@@ -1,93 +1,91 @@
-## Daily Chess.com analysis (PostgreSQL + Stockfish)
+# cccron — chess puzzle pipeline
 
-The worker loads the target user from `public.users` (by `TARGET_USER_ID`, requiring a non-empty `chessdotcom_id`), syncs recent finished games from the Chess.com PubAPI into PostgreSQL, picks one random **unanalyzed loss** (standard chess), runs Stockfish analysis, and stores results in `game_analyses` and `move_analyses`.
+A database-driven pipeline that turns your Chess.com losses into tactics
+puzzles and delivers them over Telegram. Puzzles are Lichess-style forced
+sequences (every solver move is the only good move; the opponent defends best).
 
-Stockfish can run in one of two modes (see `STOCKFISH_MODE`):
+## Pipeline
 
-- `api` — calls a remote Stockfish HTTP service `POST /analyze-game` (with `X-Stockfish-Api-Key`).
-- `local` — drives a locally installed Stockfish binary over UCI via python-chess (`STOCKFISH_PATH`). No server or API key required.
+The whole flow is a state machine on `player_games.status`, so each stage is an
+independent, resumable job (and maps cleanly onto a Lambda function later):
 
-Both modes produce the same stored analysis, so you can switch per environment (for example, `local` on your workstation and `api` in production).
-
-Idempotency is enforced in the database:
-
-- One `analysis_runs` row per `(run_date, player_id)` while a run is in progress or finished.
-- At most one `game_analyses` row per `(game_id, player_id, stockfish_depth, stockfish_multipv, heuristic_version)`.
-
-### Schema
-
-Apply the migrations in order on database `cccron` as your app role (for example `cccron_app`):
-
-1. [`sql/001_create_tables.sql`](sql/001_create_tables.sql) — game, analysis, and opening tables.
-2. [`sql/002_create_puzzle_tables.sql`](sql/002_create_puzzle_tables.sql) — `puzzles`, `telegram_users`, and `puzzle_deliveries` (required for puzzle generation and the Telegram bot).
-
-The schema references `public.users(user_id)` and reads `public.users.chessdotcom_id`. Link a user by ensuring that row exists with a populated `chessdotcom_id`.
-
-### Environment
-
-Copy [`.env.example`](.env.example) to `.env` and set at least `DATABASE_URL` and `STOCKFISH_API_KEY`.
-
-`DATABASE_URL` must be a `postgresql://` URI (for example from Vercel storage). Special characters in passwords must be URL-encoded if you embed them in the URL string.
-
-### Install
-
-```bash
-cd /path/to/cccron
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
+```
+ingest -> select -> analyze -> generate -> send / solve
+ingested   selected   analyzed    puzzled
 ```
 
-### Run
+| Stage      | Command              | What it does                                            |
+|------------|----------------------|---------------------------------------------------------|
+| ingest     | `chesspipe ingest`   | Sync recent Chess.com games as `ingested`.              |
+| select     | `chesspipe select`   | Claim one `ingested` loss → `selected` (swappable policy). |
+| analyze    | `chesspipe analyze`  | Run Stockfish on one `selected` game → `analyzed`.      |
+| generate   | `chesspipe generate` | Cook one `analyzed` game into a puzzle → `puzzled`/`no_puzzle`. |
+| send       | `chesspipe send`     | Push the daily quota to linked Telegram users.          |
+| bot        | `chesspipe bot`      | Interactive `/puzzle` bot; records solves.              |
+| (all once) | `chesspipe run`      | ingest → select → analyze → generate, one item each.    |
+| preview    | `chesspipe preview`  | Render puzzles to a local HTML gallery.                 |
+
+Stages claim work with `SELECT ... FOR UPDATE SKIP LOCKED` and flip the row to a
+transient state (`analyzing`/`generating`) before the long engine call, so
+concurrent workers never collide or hold a lock across analysis.
+
+## Engine: local or remote
+
+One interface, two backends, switched by `ENGINE_MODE`:
+
+- `local` — a local Stockfish UCI binary (`STOCKFISH_PATH`).
+- `remote` — the FastAPI service in [`engine_server/`](engine_server/), via
+  `ENGINE_API_URL` + `ENGINE_API_KEY`.
+
+Both support per-position analysis (needed to cook puzzles) and whole-game
+analysis, so switching is purely configuration.
+
+## Setup
 
 ```bash
-. .venv/bin/activate
-python scripts/run_daily_analysis.py
+python3 -m venv venv && . venv/bin/activate
+pip install -e .            # installs chesspipe + the `chesspipe` command
+cp .env.example .env        # then edit DATABASE_URL etc.
 ```
 
-The target user is selected by `TARGET_USER_ID` and must exist in `public.users` with a populated `chessdotcom_id`.
-
-To generate puzzles from analyzed games and run the Telegram bot:
+Apply the schema. Fresh database — run `sql/001_schema.sql`. Existing legacy
+database — run `sql/migrate_legacy.sql` instead (preserves games and Stockfish
+analyses, rebuilds only the puzzle layer). Both set `search_path` to the app
+schema, so you can paste them into a SQL console:
 
 ```bash
-python scripts/generate_puzzles.py     # build puzzles from move analyses
-python scripts/send_daily_puzzles.py    # push the daily quota to linked Telegram users
-python scripts/run_telegram_bot.py      # interactive /puzzle bot
+psql "$DATABASE_URL" -f sql/001_schema.sql        # fresh install
+# or
+psql "$DATABASE_URL" -f sql/migrate_legacy.sql    # upgrade existing data
 ```
 
-### Using a local Stockfish binary
+The schema references `public.users(user_id, chessdotcom_id, deleted)`. Link a
+user by ensuring that row exists with a populated `chessdotcom_id`, then point
+`TARGET_USER_ID` at it. For Telegram delivery, insert a `telegram_users` row.
 
-Set `STOCKFISH_MODE=local` and point `STOCKFISH_PATH` at your binary (defaults to `stockfish` on `PATH`). In this mode no HTTP service or `STOCKFISH_API_KEY` is required. Tune `STOCKFISH_THREADS` and `STOCKFISH_HASH_MB` to your hardware. Local mode uses a deeper default search, `STOCKFISH_LOCAL_DEPTH` (21), while API mode uses `STOCKFISH_DEPTH` (12). Either can be overridden per run with `--depth`.
-
-### Puzzles
-
-There are two puzzle generators:
-
-- **Single-move** (`scripts/generate_puzzles.py`): from stored move analyses, keeps positions where you made a clear mistake and there is a decisive, unique best move. Fast, no engine needed at generation time.
-- **Lichess-style** (`scripts/generate_lichess_puzzles.py`): reimplements the [lichess-puzzler](https://github.com/ornicar/lichess-puzzler) algorithm (AGPL-3.0). Using a local Stockfish binary, it walks each analyzed game, finds a position where you were *not* already winning but the game swung, and cooks a forced multi-move line where every solver move is the only good move and the opponent plays the best defense. Higher quality; needs the local engine.
-
-Both classify each puzzle by phase (opening/middlegame/endgame) and theme (mate, fork, sacrifice, discovered check, promotion, etc.), and estimate difficulty.
-
-### Viewing puzzles locally
-
-Render puzzles to a self-contained HTML file (browser renders the boards as SVG — no Cairo or Telegram required):
+## Run
 
 ```bash
-python scripts/preview_puzzles.py                 # single-move logic, no DB writes
-python scripts/generate_lichess_puzzles.py        # Lichess-style, local engine, preview
-python scripts/generate_lichess_puzzles.py --insert   # also write to the puzzles table
+chesspipe run                         # one full pass
+chesspipe analyze                     # or drive stages individually
+chesspipe preview --limit-games 20    # local HTML gallery, no DB writes
 ```
 
-If your local DNS cannot resolve the database host, set `DB_HOSTADDR` to its IP (the URL host is still used for TLS/SNI).
-
-### Cron
-
-Example daily at 03:15 (server local time):
+Example cron (daily at 03:15):
 
 ```cron
-15 3 * * * cd /path/to/cccron && . .venv/bin/activate && python scripts/run_daily_analysis.py >> /var/log/cccron.log 2>&1
+15 3 * * * cd /path/to/cccron && . venv/bin/activate && chesspipe run >> /var/log/cccron.log 2>&1
 ```
 
-### Linking a user
+## Remote engine (engine_server)
 
-Ensure the target user exists in `public.users` with a populated `chessdotcom_id`, then point `TARGET_USER_ID` at that `user_id`. For Telegram delivery, insert a matching row into `telegram_users` (`user_id` referencing `public.users`, plus the recipient's `telegram_id`).
+```bash
+cd engine_server
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+export STOCKFISH_PATH=/absolute/path/to/stockfish
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+Then set `ENGINE_MODE=remote`, `ENGINE_API_URL`, and `ENGINE_API_KEY` in `.env`.
+See [`engine_server/README.md`](engine_server/README.md) for endpoints.

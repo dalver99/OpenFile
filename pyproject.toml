@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chesspipe"
+version = "0.2.0"
+description = "Database-driven chess puzzle pipeline (ingest -> analyze -> generate -> solve)."
+requires-python = ">=3.10"
+dependencies = [
+    "python-chess",
+    "python-dotenv",
+    "requests",
+    "psycopg[binary]",
+    "python-telegram-bot",
+    "cairosvg",
+]
+
+[project.scripts]
+chesspipe = "chesspipe.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["chesspipe*"]

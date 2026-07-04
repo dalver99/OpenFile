@@ -1,7 +1,23 @@
+# Secrets / local config
 .env
+**/.env
+engine_server/token.txt
+
+# Data & virtualenvs
 data/
+venv/
+.venv/
+**/.venv/
+
+# Python
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
 
 # Generated local puzzle previews
 puzzles*.html
+
+# OS
+.DS_Store

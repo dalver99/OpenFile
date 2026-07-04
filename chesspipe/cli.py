@@ -1,0 +1,147 @@
+"""Command-line entry point: one subcommand per pipeline stage.
+
+    chesspipe ingest        # sync Chess.com games
+    chesspipe select        # pick next game(s) to analyze
+    chesspipe analyze       # analyze one selected game
+    chesspipe generate      # cook one analyzed game into a puzzle
+    chesspipe run           # ingest -> select -> analyze -> generate (once)
+    chesspipe send          # push daily puzzles to Telegram users
+    chesspipe bot           # run the interactive Telegram bot
+    chesspipe preview       # cook analyzed games into a local HTML gallery
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+import webbrowser
+from pathlib import Path
+
+from chesspipe.config import Settings
+
+
+def _print(result: dict) -> None:
+    print(json.dumps(result, indent=2, sort_keys=True, default=str))
+
+
+def _cmd_ingest(_: argparse.Namespace, settings: Settings) -> int:
+    from chesspipe.stages import ingest_stage
+
+    result = ingest_stage(settings)
+    _print(result)
+    return 0 if result.get("status") in ("ok", "idle") else 1
+
+
+def _cmd_select(args: argparse.Namespace, settings: Settings) -> int:
+    from chesspipe.stages import select_stage
+
+    _print(select_stage(settings, limit=args.limit))
+    return 0
+
+
+def _cmd_analyze(_: argparse.Namespace, settings: Settings) -> int:
+    from chesspipe.stages import analyze_stage
+
+    result = analyze_stage(settings)
+    _print(result)
+    return 1 if result.get("status") == "failed" else 0
+
+
+def _cmd_generate(_: argparse.Namespace, settings: Settings) -> int:
+    from chesspipe.stages import generate_stage
+
+    result = generate_stage(settings)
+    _print(result)
+    return 1 if result.get("status") == "failed" else 0
+
+
+def _cmd_run(_: argparse.Namespace, settings: Settings) -> int:
+    from chesspipe.stages import run_pipeline
+
+    result = run_pipeline(settings)
+    _print(result)
+    failed = any(step.get("status") == "failed" for step in result.get("steps", []))
+    return 1 if failed else 0
+
+
+def _cmd_send(_: argparse.Namespace, settings: Settings) -> int:
+    from chesspipe.deliver.send import send_daily_puzzles
+
+    _print(asyncio.run(send_daily_puzzles(settings)))
+    return 0
+
+
+def _cmd_bot(_: argparse.Namespace, settings: Settings) -> int:
+    from chesspipe.deliver.bot import run_polling
+
+    run_polling(settings)
+    return 0
+
+
+def _cmd_preview(args: argparse.Namespace, settings: Settings) -> int:
+    from chesspipe.db import get_connection
+    from chesspipe.engine import build_engine
+    from chesspipe.puzzle.build import generate_records
+    from chesspipe.puzzle.lichess import GeneratorConfig, LichessStyleGenerator
+    from chesspipe.puzzle.render_html import render_gallery
+
+    engine = build_engine(settings)
+    generator = LichessStyleGenerator(engine, GeneratorConfig())
+    records: list[dict] = []
+    try:
+        engine.health()
+        with get_connection(settings.database_url, settings.db_schema) as conn:
+            for rec in generate_records(conn, generator, limit_games=args.limit_games, log=print):
+                if args.phase and rec["phase"] != args.phase:
+                    continue
+                records.append(rec)
+    finally:
+        engine.close()
+
+    records.sort(key=lambda r: r["quality_score"], reverse=True)
+    records = records[: args.limit]
+    out_path = Path(args.out).resolve()
+    out_path.write_text(render_gallery(records, title="Lichess-style puzzles"), encoding="utf-8")
+    print(f"wrote {len(records)} puzzles to {out_path}")
+    if not args.no_open:
+        webbrowser.open(out_path.as_uri())
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="chesspipe", description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("ingest", help="Sync Chess.com games").set_defaults(func=_cmd_ingest)
+
+    p_select = sub.add_parser("select", help="Claim next game(s) to analyze")
+    p_select.add_argument("--limit", type=int, default=1)
+    p_select.set_defaults(func=_cmd_select)
+
+    sub.add_parser("analyze", help="Analyze one selected game").set_defaults(func=_cmd_analyze)
+    sub.add_parser("generate", help="Cook one analyzed game").set_defaults(func=_cmd_generate)
+    sub.add_parser("run", help="Run ingest->select->analyze->generate once").set_defaults(func=_cmd_run)
+    sub.add_parser("send", help="Send daily puzzles to Telegram").set_defaults(func=_cmd_send)
+    sub.add_parser("bot", help="Run the interactive Telegram bot").set_defaults(func=_cmd_bot)
+
+    p_prev = sub.add_parser("preview", help="Render puzzles to a local HTML gallery")
+    p_prev.add_argument("--limit-games", type=int, default=None, help="Max analyzed games to scan.")
+    p_prev.add_argument("--phase", choices=("opening", "middlegame", "endgame"), default=None)
+    p_prev.add_argument("--limit", type=int, default=50, help="Max puzzles in the gallery.")
+    p_prev.add_argument("--out", default="puzzles.html")
+    p_prev.add_argument("--no-open", action="store_true")
+    p_prev.set_defaults(func=_cmd_preview)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    settings = Settings.from_env()
+    return args.func(args, settings)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

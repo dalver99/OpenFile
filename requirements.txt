@@ -1,3 +1,5 @@
+# Pipeline (chesspipe) dependencies. Prefer `pip install -e .` which reads
+# pyproject.toml; this file mirrors those deps for environments that want it.
 python-chess
 python-dotenv
 requests
