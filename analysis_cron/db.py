@@ -1,3 +1,4 @@
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -7,7 +8,15 @@ from psycopg import Connection
 
 @contextmanager
 def get_connection(database_url: str, db_schema: str) -> Iterator[Connection]:
-    conn = psycopg.connect(database_url, autocommit=False)
+    # Optional escape hatch for broken/split-horizon DNS: if DB_HOSTADDR is set,
+    # libpq connects to that IP while still using the URL host for TLS SNI and
+    # certificate checks. Leave unset for normal DNS resolution.
+    connect_kwargs: dict[str, str] = {}
+    hostaddr = os.getenv("DB_HOSTADDR")
+    if hostaddr:
+        connect_kwargs["hostaddr"] = hostaddr
+
+    conn = psycopg.connect(database_url, autocommit=False, **connect_kwargs)
     try:
         with conn.cursor() as cur:
             # Keep table SQL unqualified and route through configured schema.

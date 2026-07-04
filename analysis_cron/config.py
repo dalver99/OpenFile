@@ -31,6 +31,7 @@ class Settings:
     stockfish_threads: int
     stockfish_hash_mb: int
     stockfish_depth: int
+    stockfish_local_depth: int
     stockfish_multipv: int
     stockfish_analyze_game_timeout_sec: int
     max_sync_games: int
@@ -47,6 +48,8 @@ class Settings:
     telegram_default_daily_quota: int
     puzzle_min_centipawn_loss: int
     puzzle_min_top_score_gap_cp: int
+    puzzle_solution_eval_floor_cp: int
+    puzzle_solution_eval_ceiling_cp: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -78,6 +81,10 @@ class Settings:
             stockfish_threads=max(1, int(os.getenv("STOCKFISH_THREADS", "1"))),
             stockfish_hash_mb=max(16, int(os.getenv("STOCKFISH_HASH_MB", "128"))),
             stockfish_depth=depth,
+            stockfish_local_depth=min(
+                max(int(os.getenv("STOCKFISH_LOCAL_DEPTH", "21")), 1),
+                MAX_ANALYZE_GAME_DEPTH,
+            ),
             stockfish_multipv=int(os.getenv("STOCKFISH_MULTIPV", "3")),
             stockfish_analyze_game_timeout_sec=min(
                 7200,
@@ -101,5 +108,21 @@ class Settings:
             telegram_daily_send_minute=int(os.getenv("TELEGRAM_DAILY_SEND_MINUTE", "30")),
             telegram_default_daily_quota=int(os.getenv("TELEGRAM_DEFAULT_DAILY_QUOTA", "3")),
             puzzle_min_centipawn_loss=max(0, int(os.getenv("PUZZLE_MIN_CP_LOSS", "150"))),
-            puzzle_min_top_score_gap_cp=max(0, int(os.getenv("PUZZLE_MIN_TOP_SCORE_GAP_CP", "15"))),
+            puzzle_min_top_score_gap_cp=max(0, int(os.getenv("PUZZLE_MIN_TOP_SCORE_GAP_CP", "120"))),
+            puzzle_solution_eval_floor_cp=int(os.getenv("PUZZLE_SOLUTION_EVAL_FLOOR_CP", "-150")),
+            puzzle_solution_eval_ceiling_cp=max(0, int(os.getenv("PUZZLE_SOLUTION_EVAL_CEILING_CP", "0"))),
         )
+
+    def effective_analysis_depth(self, override: int | None = None) -> int:
+        """Analysis depth to use, respecting engine mode and an optional CLI override.
+
+        Local Stockfish defaults to a deeper search (STOCKFISH_LOCAL_DEPTH, 21)
+        than the remote API mode, since we control the hardware and time budget.
+        """
+        if override is not None:
+            raw = override
+        elif self.stockfish_mode == "local":
+            raw = self.stockfish_local_depth
+        else:
+            raw = self.stockfish_depth
+        return min(max(raw, 1), MAX_ANALYZE_GAME_DEPTH)

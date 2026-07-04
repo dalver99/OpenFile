@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from analysis_cron.chesscom import ChessComClient
-from analysis_cron.config import MAX_ANALYZE_GAME_DEPTH, Settings
+from analysis_cron.config import Settings
 from analysis_cron.db import get_connection
 from analysis_cron.engine import build_engine_client, engine_identity
 from analysis_cron.repositories import (
@@ -24,17 +24,12 @@ def _log(message: str) -> None:
     print(f"[{now} UTC] {message}", flush=True)
 
 
-def _effective_depth(settings: Settings, override: int | None) -> int:
-    raw = settings.stockfish_depth if override is None else override
-    return min(max(raw, 1), MAX_ANALYZE_GAME_DEPTH)
-
-
 def run_daily_analysis(
     settings: Settings,
     *,
     stockfish_depth: int | None = None,
 ) -> dict[str, Any]:
-    depth = _effective_depth(settings, stockfish_depth)
+    depth = settings.effective_analysis_depth(stockfish_depth)
     now = datetime.now(settings.timezone)
     run_date = now.date()
     outcomes: list[dict[str, Any]] = []

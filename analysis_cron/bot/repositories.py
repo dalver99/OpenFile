@@ -74,7 +74,7 @@ def pick_undelivered_puzzle(
             WHERE p.source_player_id = %s
               {phase_sql}
               AND d.id IS NULL
-            ORDER BY random()
+            ORDER BY COALESCE(p.quality_score, 0) DESC, random()
             LIMIT 1
             """,
             tuple(params),
@@ -108,7 +108,7 @@ def pick_undelivered_puzzles(
             WHERE p.source_player_id = %s
               {phase_sql}
               AND d.id IS NULL
-            ORDER BY random()
+            ORDER BY COALESCE(p.quality_score, 0) DESC, random()
             LIMIT %s
             """,
             tuple(params),

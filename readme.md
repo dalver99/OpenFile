@@ -57,7 +57,28 @@ python scripts/run_telegram_bot.py      # interactive /puzzle bot
 
 ### Using a local Stockfish binary
 
-Set `STOCKFISH_MODE=local` and point `STOCKFISH_PATH` at your binary (defaults to `stockfish` on `PATH`). In this mode no HTTP service or `STOCKFISH_API_KEY` is required. Tune `STOCKFISH_THREADS` and `STOCKFISH_HASH_MB` to your hardware. Analysis depth is controlled by `STOCKFISH_DEPTH` (or the `--depth` flag).
+Set `STOCKFISH_MODE=local` and point `STOCKFISH_PATH` at your binary (defaults to `stockfish` on `PATH`). In this mode no HTTP service or `STOCKFISH_API_KEY` is required. Tune `STOCKFISH_THREADS` and `STOCKFISH_HASH_MB` to your hardware. Local mode uses a deeper default search, `STOCKFISH_LOCAL_DEPTH` (21), while API mode uses `STOCKFISH_DEPTH` (12). Either can be overridden per run with `--depth`.
+
+### Puzzles
+
+There are two puzzle generators:
+
+- **Single-move** (`scripts/generate_puzzles.py`): from stored move analyses, keeps positions where you made a clear mistake and there is a decisive, unique best move. Fast, no engine needed at generation time.
+- **Lichess-style** (`scripts/generate_lichess_puzzles.py`): reimplements the [lichess-puzzler](https://github.com/ornicar/lichess-puzzler) algorithm (AGPL-3.0). Using a local Stockfish binary, it walks each analyzed game, finds a position where you were *not* already winning but the game swung, and cooks a forced multi-move line where every solver move is the only good move and the opponent plays the best defense. Higher quality; needs the local engine.
+
+Both classify each puzzle by phase (opening/middlegame/endgame) and theme (mate, fork, sacrifice, discovered check, promotion, etc.), and estimate difficulty.
+
+### Viewing puzzles locally
+
+Render puzzles to a self-contained HTML file (browser renders the boards as SVG — no Cairo or Telegram required):
+
+```bash
+python scripts/preview_puzzles.py                 # single-move logic, no DB writes
+python scripts/generate_lichess_puzzles.py        # Lichess-style, local engine, preview
+python scripts/generate_lichess_puzzles.py --insert   # also write to the puzzles table
+```
+
+If your local DNS cannot resolve the database host, set `DB_HOSTADDR` to its IP (the URL host is still used for TLS/SNI).
 
 ### Cron
 

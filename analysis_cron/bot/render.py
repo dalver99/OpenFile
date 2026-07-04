@@ -78,11 +78,20 @@ def describe_side_to_move(fen: str) -> str:
 def build_puzzle_caption(puzzle: dict[str, Any]) -> str:
     side = describe_side_to_move(str(puzzle["fen_before"]))
     phase = str(puzzle.get("phase", "middlegame")).capitalize()
-    tag = str(puzzle.get("tag", "mixed")).capitalize()
+    tag = str(puzzle.get("tag", "mixed")).replace("_", " ").capitalize()
     cp_loss = puzzle.get("cp_loss")
+
+    difficulty = puzzle.get("difficulty")
+    difficulty_line = ""
+    if isinstance(difficulty, int) and difficulty > 0:
+        difficulty_line = f"Difficulty: {'★' * difficulty}{'☆' * max(0, 5 - difficulty)}\n"
+
+    goal = "Find the forced mate" if puzzle.get("is_mate") else f"Find the best move for {side}"
+
     return (
-        f"Find the best move for {side}.\n"
-        f"Phase: {phase} | Type: {tag} | Missed value: {cp_loss} cp\n"
+        f"{goal}.\n"
+        f"Phase: {phase} | Theme: {tag} | Missed value: {cp_loss} cp\n"
+        f"{difficulty_line}"
         "Reply with a move in SAN (e.g. Nf3) or UCI (e.g. g1f3)."
     )
 
