@@ -123,6 +123,22 @@ CREATE TABLE move_analyses (
 );
 CREATE INDEX idx_move_analyses_ga_ply ON move_analyses (game_analysis_id, ply);
 
+-- User-created analysis branches from the web Game Review board.
+CREATE TABLE review_sidelines (
+    id BIGSERIAL PRIMARY KEY,
+    player_game_id BIGINT NOT NULL REFERENCES player_games(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES public.users(user_id) ON DELETE CASCADE,
+    anchor_ply INTEGER NOT NULL CHECK (anchor_ply >= 0),
+    start_fen TEXT NOT NULL,
+    moves_uci JSONB NOT NULL DEFAULT '[]'::jsonb,
+    moves_san JSONB NOT NULL DEFAULT '[]'::jsonb,
+    title TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_review_sidelines_game_user
+    ON review_sidelines (player_game_id, user_id, updated_at DESC);
+
 -- ---------------------------------------------------------------------------
 -- Generate: Lichess-style forced-sequence puzzles.
 -- ---------------------------------------------------------------------------
@@ -146,6 +162,11 @@ CREATE TABLE puzzles (
     mate_in INTEGER,
     difficulty INTEGER,
     quality_score INTEGER,
+    -- Denormalized game context, so puzzle surfaces (webui/Telegram/preview)
+    -- can show it without joining back to chesscom_games/player_games.
+    time_class TEXT,
+    opponent_username TEXT,
+    played_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (game_analysis_id, mistake_ply)
 );

@@ -13,7 +13,7 @@ from telegram import InputFile, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from chesspipe.config import Settings
-from chesspipe.db import get_connection
+from chesspipe.storage import get_connection
 from chesspipe.deliver.render import (
     build_puzzle_caption,
     build_solution_san,

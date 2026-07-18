@@ -8,6 +8,7 @@ toggle so the page is usable for actual solving.
 from __future__ import annotations
 
 import html
+from datetime import date, datetime
 from typing import Any
 
 import chess
@@ -56,11 +57,24 @@ def _card(index: int, puzzle: dict[str, Any]) -> str:
     side = "White" if side_to_move == "white" else "Black"
     goal = "Find the forced mate" if puzzle.get("is_mate") else f"Find the best move for {side}"
 
+    opponent = puzzle.get("opponent_username")
+    time_class = puzzle.get("time_class")
+    played_at = puzzle.get("played_at")
+    played_at_str = played_at.strftime("%Y-%m-%d") if isinstance(played_at, (datetime, date)) else None
+    context_bits = [b for b in (f"vs {opponent}" if opponent else None,
+                                 str(time_class).capitalize() if time_class else None,
+                                 played_at_str) if b]
+    context_text = " \u00b7 ".join(context_bits)
+    context_line = (
+        f'<div class="tags">{html.escape(context_text)}</div>' if context_bits else ""
+    )
+
     return f"""<div class="card">
   <div class="board">{svg}</div>
   <div class="meta">
     <div class="num">#{index}</div>
     <div class="goal">{html.escape(goal)}</div>
+    {context_line}
     <div class="tags">Phase: {html.escape(str(puzzle.get('phase', '')))} &middot; Theme: {html.escape(str(puzzle.get('tag', '')))} &middot; {stars}</div>
     <div class="tags">Swing: {puzzle.get('cp_loss')} cp &middot; Quality: {puzzle.get('quality_score')} &middot; {html.escape(themes_str)}</div>
     <details>

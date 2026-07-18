@@ -11,9 +11,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-By default, the app looks for:
-
-`~/stockfish/stockfish-ubuntu-x86-64-avx2`
+By default, the app runs `stockfish` from `PATH`.
 
 If your binary is elsewhere:
 
@@ -118,7 +116,7 @@ Analyze a full game from UCI moves:
 curl -X POST "http://127.0.0.1:8000/analyze-game" \
   -H "Content-Type: application/json" \
   -H "X-Stockfish-Api-Key: $STOCKFISH_API_KEY" \
-  -d '{"moves":["e2e4","e7e5","g1f3","b8c6"],"depth":10,"p":3}'
+  -d '{"moves":["e2e4","e7e5","g1f3","b8c6"],"depth":16,"p":1,"deep_depth":20,"deep_p":3,"deep_threshold_cp":60,"deep_max_moves":12}'
 ```
 
 Analyze a full game from PGN:
@@ -127,8 +125,12 @@ Analyze a full game from PGN:
 curl -X POST "http://127.0.0.1:8000/analyze-game" \
   -H "Content-Type: application/json" \
   -H "X-Stockfish-Api-Key: $STOCKFISH_API_KEY" \
-  -d '{"pgn":"1. e4 e5 2. Nf3 Nc6 *","depth":10,"p":3}'
+  -d '{"pgn":"1. e4 e5 2. Nf3 Nc6 *","depth":16,"p":1,"deep_depth":20,"deep_p":3,"deep_threshold_cp":60,"deep_max_moves":12}'
 ```
+
+Whole-game analysis searches each main-line position once and reuses adjacent
+position scores. Moves exceeding `deep_threshold_cp` are selectively searched
+again at `deep_depth`, capped by `deep_max_moves`.
 
 `/analyze-game` classifies each move with practical heuristics:
 

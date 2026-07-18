@@ -51,15 +51,21 @@ class Settings:
     # Whole-game analysis (analyze stage).
     analysis_depth: int
     analysis_multipv: int
+    analysis_deep_depth: int
+    analysis_deep_multipv: int
+    analysis_deep_threshold_cp: int
+    analysis_deep_max_moves: int
 
     # Puzzle cooking (generate stage).
     cook_depth: int
     cook_time_sec: float
+    puzzle_max_candidates: int
+    puzzle_max_solution_plies: int
+    puzzle_fallback_min_plies: int
 
     # Ingest (Chess.com).
     recent_archive_months: int
     max_sync_games: int
-    chesscom_sync_fresh_days: int
     user_agent: str
 
     # Delivery / Telegram.
@@ -96,11 +102,27 @@ class Settings:
             engine_timeout_sec=min(7200, max(30, _int("ENGINE_TIMEOUT_SEC", 1200))),
             analysis_depth=_clamp_depth(_int("ANALYSIS_DEPTH", 12)),
             analysis_multipv=max(1, _int("ANALYSIS_MULTIPV", 3)),
-            cook_depth=_clamp_depth(_int("COOK_DEPTH", 21)),
-            cook_time_sec=float(os.getenv("COOK_TIME_SEC", "5") or "5"),
+            analysis_deep_depth=_clamp_depth(_int("ANALYSIS_DEEP_DEPTH", 20)),
+            analysis_deep_multipv=max(1, _int("ANALYSIS_DEEP_MULTIPV", 3)),
+            analysis_deep_threshold_cp=max(
+                1, _int("ANALYSIS_DEEP_THRESHOLD_CP", 60)
+            ),
+            analysis_deep_max_moves=max(
+                0, _int("ANALYSIS_DEEP_MAX_MOVES", 12)
+            ),
+            cook_depth=_clamp_depth(_int("COOK_DEPTH", 19)),
+            cook_time_sec=float(os.getenv("COOK_TIME_SEC", "3") or "3"),
+            puzzle_max_candidates=max(
+                1, _int("PUZZLE_MAX_CANDIDATES", 6)
+            ),
+            puzzle_max_solution_plies=max(
+                3, _int("PUZZLE_MAX_SOLUTION_PLIES", 11)
+            ),
+            puzzle_fallback_min_plies=max(
+                0, _int("PUZZLE_FALLBACK_MIN_PLIES", 0)
+            ),
             recent_archive_months=_int("RECENT_ARCHIVE_MONTHS", 1),
             max_sync_games=_int("MAX_SYNC_GAMES", 40),
-            chesscom_sync_fresh_days=max(0, _int("CHESSCOM_SYNC_FRESH_DAYS", 7)),
             user_agent=os.getenv(
                 "CHESSCOM_USER_AGENT",
                 "cccron/0.2 (contact: set CHESSCOM_USER_AGENT)",

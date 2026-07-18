@@ -31,12 +31,20 @@ class RemoteEngine:
         depth: int = 21,
         time_sec: float = 5.0,
         timeout_sec: int = 1200,
+        analysis_deep_depth: int = 20,
+        analysis_deep_multipv: int = 3,
+        analysis_deep_threshold_cp: int = 60,
+        analysis_deep_max_moves: int = 12,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._depth = depth
         # Server search is depth-bound; time_sec kept for interface parity.
         self._time_sec = time_sec
         self._timeout = timeout_sec
+        self._analysis_deep_depth = analysis_deep_depth
+        self._analysis_deep_multipv = analysis_deep_multipv
+        self._analysis_deep_threshold_cp = analysis_deep_threshold_cp
+        self._analysis_deep_max_moves = analysis_deep_max_moves
         self.session = requests.Session()
         self.session.headers.update(
             {"Content-Type": "application/json", "X-Stockfish-Api-Key": api_key}
@@ -74,7 +82,15 @@ class RemoteEngine:
     def analyse_game(self, pgn: str, depth: int, multipv: int) -> dict[str, Any]:
         response = self.session.post(
             f"{self.base_url}/analyze-game",
-            json={"pgn": pgn, "depth": depth, "p": multipv},
+            json={
+                "pgn": pgn,
+                "depth": depth,
+                "p": multipv,
+                "deep_depth": self._analysis_deep_depth,
+                "deep_p": self._analysis_deep_multipv,
+                "deep_threshold_cp": self._analysis_deep_threshold_cp,
+                "deep_max_moves": self._analysis_deep_max_moves,
+            },
             timeout=self._timeout,
         )
         response.raise_for_status()

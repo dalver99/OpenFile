@@ -4,7 +4,7 @@ Every stage opens its own short-lived connection(s) and returns a JSON-able
 dict, so each maps cleanly onto an independent job / Lambda handler:
 
     ingest   -> sync Chess.com games as 'ingested'
-    select   -> claim one 'ingested' loss -> 'selected'   (swappable policy)
+    select   -> claim one 'ingested' game -> 'selected'   (swappable policy)
     analyze  -> claim one 'selected' -> engine -> 'analyzed'
     generate -> claim one 'analyzed' -> cook -> 'puzzled' | 'no_puzzle'
 
@@ -26,7 +26,7 @@ from chesspipe.analyze.repository import (
     merge_summary_for_storage,
 )
 from chesspipe.config import Settings
-from chesspipe.db import get_connection
+from chesspipe.storage import get_connection
 from chesspipe.engine import build_engine, engine_identity
 from chesspipe.ingest.chesscom import ChessComClient
 from chesspipe.ingest.repository import get_target_player, sync_recent_games
@@ -49,6 +49,13 @@ def _set_status(conn: Connection, player_game_id: int, status: str, detail: str 
             """,
             (status, detail, player_game_id),
         )
+
+
+def _set_analysis_detail(settings: Settings, player_game_id: int, detail: str) -> None:
+    """Publish a coarse, truthful phase for the web review poller."""
+    with get_connection(settings.database_url, settings.db_schema) as conn:
+        _set_status(conn, player_game_id, "analyzing", detail)
+        conn.commit()
 
 
 def _claim(conn: Connection, from_status: str, to_status: str, player_id: int | None) -> dict[str, Any] | None:
@@ -77,6 +84,53 @@ def _claim(conn: Connection, from_status: str, to_status: str, player_id: int | 
         return dict(row) if row else None
 
 
+def _claim_specific_analysis(
+    conn: Connection, player_game_id: int, player_id: int
+) -> dict[str, Any] | None:
+    """Claim one explicitly requested game for on-demand review analysis."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            UPDATE player_games
+            SET status = 'analyzing', status_detail = 'engine_starting', status_updated_at = now()
+            WHERE id = %s
+              AND player_id = %s
+              AND status IN ('ingested', 'selected', 'failed')
+              AND NOT EXISTS (
+                  SELECT 1 FROM game_analyses ga WHERE ga.player_game_id = player_games.id
+              )
+            RETURNING id, game_id, player_id, side
+            """,
+            (player_game_id, player_id),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def _existing_analysis_id(conn: Connection, player_game_id: int, player_id: int) -> int | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT ga.id
+            FROM game_analyses ga
+            WHERE ga.player_game_id = %s AND ga.player_id = %s
+            """,
+            (player_game_id, player_id),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else None
+
+
+def _player_game_status(conn: Connection, player_game_id: int, player_id: int) -> str | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT status FROM player_games WHERE id = %s AND player_id = %s",
+            (player_game_id, player_id),
+        )
+        row = cur.fetchone()
+        return str(row[0]) if row else None
+
+
 def _game_pgn(conn: Connection, game_id: int) -> str | None:
     with conn.cursor() as cur:
         cur.execute("SELECT pgn FROM chesscom_games WHERE id = %s", (game_id,))
@@ -89,9 +143,13 @@ def _game_analysis_input(conn: Connection, player_game_id: int) -> dict[str, Any
         cur.execute(
             """
             SELECT ga.id AS game_analysis_id, ga.game_id,
-                   ga.player_id AS source_player_id, g.pgn
+                   ga.player_id AS source_player_id, g.pgn,
+                   g.time_class, g.end_time AS played_at,
+                   CASE WHEN pg.side = 'white' THEN g.black_username ELSE g.white_username END
+                       AS opponent_username
             FROM game_analyses ga
             JOIN chesscom_games g ON g.id = ga.game_id
+            JOIN player_games pg ON pg.game_id = ga.game_id AND pg.player_id = ga.player_id
             WHERE ga.player_game_id = %s
             """,
             (player_game_id,),
@@ -103,7 +161,7 @@ def _game_analysis_input(conn: Connection, player_game_id: int) -> dict[str, Any
 # --------------------------------------------------------------------------- #
 # stages
 # --------------------------------------------------------------------------- #
-def ingest_stage(settings: Settings) -> dict[str, Any]:
+def ingest_stage(settings: Settings, *, force: bool = False) -> dict[str, Any]:
     with get_connection(settings.database_url, settings.db_schema) as conn:
         player = get_target_player(conn, settings.target_user_id)
         if player is None:
@@ -113,23 +171,30 @@ def ingest_stage(settings: Settings) -> dict[str, Any]:
                 "reason": "target_user_not_found_or_missing_chessdotcom_id",
             }
         client = ChessComClient(settings.user_agent)
-        upserted = sync_recent_games(
+        sync = sync_recent_games(
             conn,
             client,
             int(player["id"]),
             str(player["username"]),
             archive_months=settings.recent_archive_months,
             max_sync_games=settings.max_sync_games,
-            skip_fetch_if_fresh_within_days=settings.chesscom_sync_fresh_days,
+            refresh_existing=force,
             log=log,
         )
         conn.commit()
-    return {"stage": "ingest", "status": "ok", "player_id": int(player["id"]), "upserted": upserted}
+    return {
+        "stage": "ingest",
+        "status": "ok",
+        "player_id": int(player["id"]),
+        **sync,
+        "forced": force,
+    }
 
 
 def select_stage(settings: Settings, limit: int = 1) -> dict[str, Any]:
-    """Selection policy: pick unanalyzed losses (standard chess) at random.
+    """Selection policy: pick any unanalyzed game (standard chess) at random.
 
+    Not restricted to losses — wins and draws have mistakes worth drilling too.
     Kept deliberately separate so the policy can evolve (e.g. weight by rating
     swing or opening) without touching the analyze stage.
     """
@@ -147,7 +212,6 @@ def select_stage(settings: Settings, limit: int = 1) -> dict[str, Any]:
                         JOIN chesscom_games g ON g.id = pg.game_id
                         WHERE pg.player_id = %s
                           AND pg.status = 'ingested'
-                          AND pg.is_loss
                           AND g.rules = 'chess'
                           AND g.pgn IS NOT NULL AND g.pgn <> ''
                         ORDER BY random()
@@ -166,26 +230,31 @@ def select_stage(settings: Settings, limit: int = 1) -> dict[str, Any]:
     return {"stage": "select", "status": "ok", "selected": selected, "count": len(selected)}
 
 
-def analyze_stage(settings: Settings) -> dict[str, Any]:
+def _analyze_claim(settings: Settings, claim: dict[str, Any]) -> dict[str, Any]:
+    pg_id = int(claim["id"])
     with get_connection(settings.database_url, settings.db_schema) as conn:
-        claim = _claim(conn, "selected", "analyzing", settings.target_user_id)
-        conn.commit()
-        if claim is None:
-            return {"stage": "analyze", "status": "idle", "reason": "no_selected_game"}
         pgn = _game_pgn(conn, int(claim["game_id"]))
 
-    pg_id = int(claim["id"])
     if not pgn:
         with get_connection(settings.database_url, settings.db_schema) as conn:
             _set_status(conn, pg_id, "failed", "missing_pgn")
             conn.commit()
         return {"stage": "analyze", "status": "failed", "player_game_id": pg_id, "reason": "missing_pgn"}
 
-    log(f"analyze: player_game={pg_id} game_id={claim['game_id']} depth={settings.analysis_depth}")
+    log(
+        f"analyze: player_game={pg_id} game_id={claim['game_id']} "
+        f"base=depth{settings.analysis_depth}/pv{settings.analysis_multipv} "
+        f"deep=depth{settings.analysis_deep_depth}/pv{settings.analysis_deep_multipv} "
+        f"threshold={settings.analysis_deep_threshold_cp}cp "
+        f"max_deep_moves={settings.analysis_deep_max_moves}"
+    )
     engine = build_engine(settings)
     try:
+        _set_analysis_detail(settings, pg_id, "engine_starting")
         engine.health()
+        _set_analysis_detail(settings, pg_id, "analyzing_positions")
         result = engine.analyse_game(pgn, settings.analysis_depth, settings.analysis_multipv)
+        _set_analysis_detail(settings, pg_id, "saving_review")
     except Exception as exc:  # noqa: BLE001
         log(f"analyze: player_game={pg_id} failed: {exc}")
         with get_connection(settings.database_url, settings.db_schema) as conn:
@@ -216,12 +285,70 @@ def analyze_stage(settings: Settings) -> dict[str, Any]:
     return {"stage": "analyze", "status": "ok", "player_game_id": pg_id, "game_analysis_id": ga_id}
 
 
-def generate_stage(settings: Settings) -> dict[str, Any]:
+def analyze_stage(settings: Settings) -> dict[str, Any]:
     with get_connection(settings.database_url, settings.db_schema) as conn:
-        claim = _claim(conn, "analyzed", "generating", settings.target_user_id)
+        claim = _claim(conn, "selected", "analyzing", settings.target_user_id)
+        conn.commit()
+    if claim is None:
+        return {"stage": "analyze", "status": "idle", "reason": "no_selected_game"}
+    return _analyze_claim(settings, claim)
+
+
+def analyze_game_stage(settings: Settings, player_game_id: int) -> dict[str, Any]:
+    """Analyze one user-selected game, used by the web Game Review flow."""
+    with get_connection(settings.database_url, settings.db_schema) as conn:
+        existing_id = _existing_analysis_id(conn, player_game_id, settings.target_user_id)
+        if existing_id is not None:
+            return {
+                "stage": "analyze",
+                "status": "ok",
+                "reason": "already_analyzed",
+                "player_game_id": player_game_id,
+                "game_analysis_id": existing_id,
+            }
+
+        claim = _claim_specific_analysis(conn, player_game_id, settings.target_user_id)
         conn.commit()
         if claim is None:
-            return {"stage": "generate", "status": "idle", "reason": "no_analyzed_game"}
+            current_status = _player_game_status(conn, player_game_id, settings.target_user_id)
+            if current_status is None:
+                return {
+                    "stage": "analyze",
+                    "status": "failed",
+                    "player_game_id": player_game_id,
+                    "reason": "game_not_found",
+                }
+            return {
+                "stage": "analyze",
+                "status": "idle",
+                "player_game_id": player_game_id,
+                "reason": "analysis_in_progress" if current_status == "analyzing" else "game_not_claimable",
+                "game_status": current_status,
+            }
+
+    return _analyze_claim(settings, claim)
+
+
+def generate_stage(
+    settings: Settings,
+    *,
+    retry_no_puzzle: bool = False,
+) -> dict[str, Any]:
+    source_status = "no_puzzle" if retry_no_puzzle else "analyzed"
+    with get_connection(settings.database_url, settings.db_schema) as conn:
+        claim = _claim(
+            conn,
+            source_status,
+            "generating",
+            settings.target_user_id,
+        )
+        conn.commit()
+        if claim is None:
+            return {
+                "stage": "generate",
+                "status": "idle",
+                "reason": f"no_{source_status}_game",
+            }
         pg_id = int(claim["id"])
         game = _game_analysis_input(conn, pg_id)
         move_rows = load_move_rows(conn, int(game["game_analysis_id"])) if game else []
@@ -232,11 +359,26 @@ def generate_stage(settings: Settings) -> dict[str, Any]:
             conn.commit()
         return {"stage": "generate", "status": "failed", "player_game_id": pg_id, "reason": "missing_game_analysis"}
 
-    log(f"generate: player_game={pg_id} cooking (depth={settings.cook_depth}, {settings.cook_time_sec}s/pos)")
+    log(
+        f"generate: player_game={pg_id} cooking "
+        f"(depth={settings.cook_depth}, {settings.cook_time_sec}s/pos, "
+        f"max_candidates={settings.puzzle_max_candidates}, "
+        f"max_line={settings.puzzle_max_solution_plies} plies, "
+        f"fallback_min={settings.puzzle_fallback_min_plies})"
+    )
     engine = build_engine(settings)
+    generator = LichessStyleGenerator(
+        engine,
+        GeneratorConfig(
+            max_candidates=settings.puzzle_max_candidates,
+            max_solution_plies=settings.puzzle_max_solution_plies,
+            fallback_min_solution_plies=(
+                settings.puzzle_fallback_min_plies or None
+            ),
+            allow_mate_in_one=settings.puzzle_fallback_min_plies == 1,
+        ),
+    )
     try:
-        engine.health()
-        generator = LichessStyleGenerator(engine, GeneratorConfig())
         record = cook_record(generator, game, move_rows)
     except Exception as exc:  # noqa: BLE001
         log(f"generate: player_game={pg_id} failed: {exc}")
@@ -251,8 +393,16 @@ def generate_stage(settings: Settings) -> dict[str, Any]:
         if record is None:
             _set_status(conn, pg_id, "no_puzzle")
             conn.commit()
-            log(f"generate: player_game={pg_id} -> no_puzzle")
-            return {"stage": "generate", "status": "no_puzzle", "player_game_id": pg_id}
+            log(
+                f"generate: player_game={pg_id} -> no_puzzle "
+                f"stats={generator.last_stats}"
+            )
+            return {
+                "stage": "generate",
+                "status": "no_puzzle",
+                "player_game_id": pg_id,
+                "stats": generator.last_stats,
+            }
         insert_puzzle(conn, record)
         _set_status(conn, pg_id, "puzzled")
         conn.commit()
@@ -264,6 +414,8 @@ def generate_stage(settings: Settings) -> dict[str, Any]:
         "player_game_id": pg_id,
         "tag": record["tag"],
         "solution_san": record["solution_san"],
+        "retried": retry_no_puzzle,
+        "stats": generator.last_stats,
     }
 
 

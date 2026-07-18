@@ -15,13 +15,13 @@ def insert_puzzle(conn: Connection, record: dict[str, Any]) -> bool:
                 game_analysis_id, game_id, source_player_id, mistake_ply,
                 fen_before, last_move_uci, solution_uci, solution_san, solution_line_uci,
                 side_to_move, phase, tag, themes, cp_loss, is_mate, mate_in,
-                difficulty, quality_score
+                difficulty, quality_score, time_class, opponent_username, played_at
             )
             VALUES (
                 %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s,
-                %s, %s
+                %s, %s, %s, %s, %s
             )
             ON CONFLICT (game_analysis_id, mistake_ply) DO NOTHING
             """,
@@ -44,6 +44,9 @@ def insert_puzzle(conn: Connection, record: dict[str, Any]) -> bool:
                 record["mate_in"],
                 record["difficulty"],
                 record["quality_score"],
+                record.get("time_class"),
+                record.get("opponent_username"),
+                record.get("played_at"),
             ),
         )
         return cur.rowcount > 0

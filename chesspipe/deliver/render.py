@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 import cairosvg
@@ -71,6 +72,27 @@ def describe_side_to_move(fen: str) -> str:
     return "White" if chess.Board(fen).turn == chess.WHITE else "Black"
 
 
+def _format_played_at(value: Any) -> str | None:
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%Y-%m-%d")
+    return None
+
+
+def _game_context_line(puzzle: dict[str, Any]) -> str:
+    opponent = puzzle.get("opponent_username")
+    time_class = puzzle.get("time_class")
+    played_at = _format_played_at(puzzle.get("played_at"))
+
+    bits = []
+    if opponent:
+        bits.append(f"vs {opponent}")
+    if time_class:
+        bits.append(str(time_class).capitalize())
+    if played_at:
+        bits.append(played_at)
+    return f"{' | '.join(bits)}\n" if bits else ""
+
+
 def build_puzzle_caption(puzzle: dict[str, Any]) -> str:
     side = describe_side_to_move(str(puzzle["fen_before"]))
     phase = str(puzzle.get("phase", "middlegame")).capitalize()
@@ -87,6 +109,7 @@ def build_puzzle_caption(puzzle: dict[str, Any]) -> str:
 
     return (
         f"{goal}.\n"
+        f"{_game_context_line(puzzle)}"
         f"Phase: {phase} | Theme: {tag} | Swing: {cp_loss} cp\n"
         f"{difficulty_line}"
         "Reply with a move in SAN (e.g. Nf3) or UCI (e.g. g1f3)."

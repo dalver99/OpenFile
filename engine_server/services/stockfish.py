@@ -244,76 +244,140 @@ class EngineManager:
     def analyze_game(self, payload: GameAnalyzeRequest) -> dict:
         engine = self._require_engine()
         board, moves = self._moves_from_game_request(payload)
-        move_analyses = []
         total_plies = len(moves)
         milestone_seen: set[int] = set()
         t0 = time.perf_counter()
+        positions = [board.copy(stack=False)]
+        move_context = []
+
+        for index, move in enumerate(moves, start=1):
+            if move not in board.legal_moves:
+                raise ValueError(f"Illegal move at ply {index}: {move.uci()}")
+            move_context.append(
+                {
+                    "ply": index,
+                    "move_number": board.fullmove_number,
+                    "side": "white" if board.turn == chess.WHITE else "black",
+                    "move": move.uci(),
+                    "san": board.san(move),
+                    "fen_before": board.fen(),
+                }
+            )
+            board.push(move)
+            move_context[-1]["fen_after"] = board.fen()
+            positions.append(board.copy(stack=False))
 
         with self._lock:
-            for index, move in enumerate(moves, start=1):
-                if move not in board.legal_moves:
-                    raise ValueError(f"Illegal move at ply {index}: {move.uci()}")
-
-                before_fen = board.fen()
-                mover = board.turn
-                san = board.san(move)
-                before_infos = engine.analyse(
-                    board,
-                    chess.engine.Limit(depth=payload.depth),
-                    multipv=payload.p,
+            def analyze_at(position_index: int, depth: int, p: int) -> list[dict]:
+                if positions[position_index].is_game_over():
+                    return []
+                infos = engine.analyse(
+                    positions[position_index],
+                    chess.engine.Limit(depth=depth),
+                    multipv=p,
                 )
-                candidate_lines = [
-                    self._format_line(board, info, rank, pov=mover)
-                    for rank, info in enumerate(before_infos, start=1)
+                if isinstance(infos, dict):
+                    infos = [infos]
+                return [
+                    self._format_line(
+                        positions[position_index],
+                        info,
+                        rank,
+                        pov=positions[position_index].turn,
+                    )
+                    for rank, info in enumerate(infos, start=1)
                 ]
-                best_before_cp = candidate_lines[0]["score_cp"] if candidate_lines else None
-                best_moves = [line["best_move"] for line in candidate_lines]
 
-                board.push(move)
-                after_fen = board.fen()
-                after_info = engine.analyse(board, chess.engine.Limit(depth=payload.depth))
-                after_cp = self._score_to_cp(after_info["score"], mover)
+            def score_at(position_index: int) -> int:
+                if analyses[position_index]:
+                    return int(analyses[position_index][0]["score_cp"] or 0)
+                if positions[position_index].is_checkmate():
+                    return -100_000
+                return 0
 
-                centipawn_loss = None
-                if best_before_cp is not None and after_cp is not None:
-                    centipawn_loss = max(0, best_before_cp - after_cp)
+            analyses = []
+            for position_index in range(len(positions)):
+                analyses.append(
+                    analyze_at(position_index, payload.depth, payload.p)
+                )
+                if position_index < total_plies:
+                    _log_analyze_game_progress(
+                        position_index + 1,
+                        total_plies,
+                        milestone_seen,
+                        elapsed_s=time.perf_counter() - t0,
+                    )
 
-                played_uci = move.uci()
-                played_rank = best_moves.index(played_uci) + 1 if played_uci in best_moves else None
-                classification = self._classify_move(
-                    centipawn_loss=centipawn_loss,
-                    played_is_top_move=played_rank == 1,
-                    played_is_in_top_p=played_rank is not None,
-                    before_cp=best_before_cp,
-                    after_cp=after_cp,
+            candidates: list[tuple[int, int]] = []
+            for index, context in enumerate(move_context):
+                before_cp = score_at(index)
+                after_cp = -score_at(index + 1)
+                loss = max(0, before_cp - after_cp)
+                if loss >= payload.deep_threshold_cp:
+                    candidates.append((loss, index))
+
+            deep_enabled = (
+                payload.deep_max_moves > 0
+                and payload.deep_depth > payload.depth
+            )
+            if deep_enabled:
+                deep_move_indexes = {
+                    index
+                    for _priority, index in sorted(candidates, reverse=True)[
+                        : payload.deep_max_moves
+                    ]
+                }
+            else:
+                deep_move_indexes = set()
+            deep_requirements: dict[int, int] = {}
+            for index in deep_move_indexes:
+                deep_requirements[index] = max(
+                    deep_requirements.get(index, 1),
+                    payload.deep_p,
+                )
+                deep_requirements[index + 1] = max(
+                    deep_requirements.get(index + 1, 1),
+                    1,
+                )
+            for position_index, p in sorted(deep_requirements.items()):
+                analyses[position_index] = analyze_at(
+                    position_index,
+                    payload.deep_depth,
+                    p,
                 )
 
-                move_analyses.append(
-                    {
-                        "ply": index,
-                        "move_number": (index + 1) // 2,
-                        "side": "white" if mover == chess.WHITE else "black",
-                        "move": played_uci,
-                        "san": san,
-                        "classification": classification,
-                        "centipawn_loss": centipawn_loss,
-                        "evaluation_before_cp": best_before_cp,
-                        "evaluation_after_cp": after_cp,
-                        "evaluation_change_cp": None
-                        if best_before_cp is None or after_cp is None
-                        else after_cp - best_before_cp,
-                        "played_rank": played_rank,
-                        "top_moves": candidate_lines,
-                        "fen_before": before_fen,
-                        "fen_after": after_fen,
-                    }
-                )
-                _log_analyze_game_progress(
-                    index,
-                    total_plies,
-                    milestone_seen,
-                    elapsed_s=time.perf_counter() - t0,
-                )
+        move_analyses = []
+        for index, context in enumerate(move_context):
+            candidate_lines = analyses[index]
+            best_before_cp = score_at(index)
+            after_cp = -score_at(index + 1)
+            centipawn_loss = max(0, best_before_cp - after_cp)
+            best_moves = [line["best_move"] for line in candidate_lines]
+            played_uci = str(context["move"])
+            played_rank = (
+                best_moves.index(played_uci) + 1
+                if played_uci in best_moves
+                else None
+            )
+            classification = self._classify_move(
+                centipawn_loss=centipawn_loss,
+                played_is_top_move=played_rank == 1,
+                played_is_in_top_p=played_rank is not None,
+                before_cp=best_before_cp,
+                after_cp=after_cp,
+            )
+            move_analyses.append(
+                {
+                    **context,
+                    "classification": classification,
+                    "centipawn_loss": centipawn_loss,
+                    "evaluation_before_cp": best_before_cp,
+                    "evaluation_after_cp": after_cp,
+                    "evaluation_change_cp": after_cp - best_before_cp,
+                    "played_rank": played_rank,
+                    "top_moves": candidate_lines,
+                }
+            )
 
         summary = {
             "total_moves": len(move_analyses),
@@ -329,4 +393,14 @@ class EngineManager:
             "p": payload.p,
             "summary": summary,
             "moves": move_analyses,
+            "adaptive": {
+                "enabled": deep_enabled,
+                "deep_depth": payload.deep_depth,
+                "deep_p": payload.deep_p,
+                "threshold_cp": payload.deep_threshold_cp,
+                "max_moves": payload.deep_max_moves,
+                "deepened_plies": sorted(index + 1 for index in deep_move_indexes),
+                "base_positions": len(positions),
+                "deep_positions": len(deep_requirements),
+            },
         }

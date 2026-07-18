@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, TypedDict
 
 from psycopg import Connection
 from psycopg.rows import dict_row
@@ -29,24 +29,25 @@ def get_target_player(conn: Connection, target_user_id: int) -> dict[str, Any] |
         return dict(row) if row else None
 
 
-def newest_stored_game_end(conn: Connection, player_id: int) -> datetime | None:
+class SyncSummary(TypedDict):
+    fetched: int
+    upserted: int
+
+
+def existing_game_urls(conn: Connection, player_id: int, urls: list[str]) -> set[str]:
+    if not urls:
+        return set()
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT MAX(g.end_time)
-            FROM player_games pg
-            JOIN chesscom_games g ON g.id = pg.game_id
-            WHERE pg.player_id = %s AND g.end_time IS NOT NULL
+            SELECT g.chesscom_url
+            FROM chesscom_games g
+            JOIN player_games pg ON pg.game_id = g.id
+            WHERE pg.player_id = %s AND g.chesscom_url = ANY(%s::text[])
             """,
-            (player_id,),
+            (player_id, urls),
         )
-        row = cur.fetchone()
-    if row is None or row[0] is None:
-        return None
-    end = row[0]
-    if isinstance(end, datetime) and end.tzinfo is None:
-        return end.replace(tzinfo=timezone.utc)
-    return end
+        return {str(row[0]) for row in cur.fetchall()}
 
 
 def sync_recent_games(
@@ -57,30 +58,26 @@ def sync_recent_games(
     *,
     archive_months: int,
     max_sync_games: int,
-    skip_fetch_if_fresh_within_days: int,
+    refresh_existing: bool,
     log: Callable[[str], None],
-) -> int:
-    """Upsert recent Chess.com games. Skips the HTTP fetch when local data is fresh."""
-    if skip_fetch_if_fresh_within_days > 0:
-        threshold = datetime.now(timezone.utc) - timedelta(days=skip_fetch_if_fresh_within_days)
-        newest = newest_stored_game_end(conn, player_id)
-        if newest is not None and newest >= threshold:
-            log(
-                f"skip Chess.com sync player_id={player_id}: newest stored game ended "
-                f"{newest.isoformat()} (within last {skip_fetch_if_fresh_within_days} days)"
-            )
-            return 0
-
+) -> SyncSummary:
+    """Fetch recent games and normally write only previously unseen URLs."""
     games = client.recent_games(username, archive_months)
     if max_sync_games > 0:
         games = games[:max_sync_games]
-    total = len(games)
-    for i, game in enumerate(games):
+    fetched = len(games)
+    known_urls = existing_game_urls(conn, player_id, [game.url for game in games])
+    pending = games if refresh_existing else [game for game in games if game.url not in known_urls]
+    total = len(pending)
+    for i, game in enumerate(pending):
         upsert_game_and_player(conn, player_id, username, game)
         if total and (i + 1) % 25 == 0:
-            log(f"Chess.com sync player_id={player_id}: upserted {i + 1}/{total} games")
-    log(f"Chess.com sync player_id={player_id}: upserted {total} games")
-    return total
+            log(f"Chess.com sync player_id={player_id}: imported {i + 1}/{total} new games")
+    log(
+        f"Chess.com sync player_id={player_id}: checked {fetched} recent games, "
+        f"imported {total}"
+    )
+    return {"fetched": fetched, "upserted": total}
 
 
 def upsert_game_and_player(

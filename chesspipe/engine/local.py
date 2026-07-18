@@ -46,6 +46,45 @@ def _top_moves(infos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _move_metrics(
+    before_lines: list[dict[str, Any]],
+    after_lines: list[dict[str, Any]],
+    played_uci: str,
+    before_board: chess.Board,
+    after_board: chess.Board,
+) -> tuple[int, int, int, int | None]:
+    """Return mover-POV before/after scores, loss, and played rank."""
+    eval_before_cp = _position_score(before_lines, before_board)
+    # The adjacent position is evaluated for the opponent, so invert it to
+    # reuse that exact result from the mover's point of view.
+    eval_after_cp = -_position_score(after_lines, after_board)
+    played_rank = next(
+        (
+            rank
+            for rank, entry in enumerate(before_lines, start=1)
+            if entry["move"] == played_uci
+        ),
+        None,
+    )
+    return (
+        eval_before_cp,
+        eval_after_cp,
+        max(0, eval_before_cp - eval_after_cp),
+        played_rank,
+    )
+
+
+def _position_score(
+    lines: list[dict[str, Any]],
+    board: chess.Board,
+) -> int:
+    if lines:
+        return int(lines[0]["score_cp"])
+    if board.is_checkmate():
+        return -MATE_SCORE
+    return 0
+
+
 class LocalEngine:
     def __init__(
         self,
@@ -55,12 +94,20 @@ class LocalEngine:
         hash_mb: int = 128,
         depth: int = 21,
         time_sec: float = 5.0,
+        analysis_deep_depth: int = 20,
+        analysis_deep_multipv: int = 3,
+        analysis_deep_threshold_cp: int = 60,
+        analysis_deep_max_moves: int = 12,
     ) -> None:
         self.path = path
         self._threads = threads
         self._hash_mb = hash_mb
         self._depth = depth
         self._time_sec = time_sec
+        self._analysis_deep_depth = analysis_deep_depth
+        self._analysis_deep_multipv = analysis_deep_multipv
+        self._analysis_deep_threshold_cp = analysis_deep_threshold_cp
+        self._analysis_deep_max_moves = analysis_deep_max_moves
         self._engine: chess.engine.SimpleEngine | None = None
 
     def __enter__(self) -> "LocalEngine":
@@ -114,52 +161,107 @@ class LocalEngine:
             raise ValueError("Could not parse PGN.")
 
         board = game.board()
-        moves_out: list[dict[str, Any]] = []
-        limit = Limit(depth=depth)
         engine = self._ensure()
+        moves = list(game.mainline_moves())
+        positions = [board.copy(stack=False)]
+        move_context: list[dict[str, Any]] = []
 
-        for ply, move in enumerate(game.mainline_moves(), start=1):
-            side = "white" if board.turn == chess.WHITE else "black"
-            move_number = board.fullmove_number
-            fen_before = board.fen()
-            san = board.san(move)
-            uci = move.uci()
+        for ply, move in enumerate(moves, start=1):
+            move_context.append(
+                {
+                    "ply": ply,
+                    "move_number": board.fullmove_number,
+                    "side": "white" if board.turn == chess.WHITE else "black",
+                    "move": move.uci(),
+                    "san": board.san(move),
+                    "fen_before": board.fen(),
+                }
+            )
+            board.push(move)
+            move_context[-1]["fen_after"] = board.fen()
+            positions.append(board.copy(stack=False))
 
-            infos = engine.analyse(board, limit, multipv=multipv)
+        def analyse_at(index: int, search_depth: int, p: int) -> list[dict[str, Any]]:
+            if positions[index].is_game_over():
+                return []
+            infos = engine.analyse(
+                positions[index],
+                Limit(depth=search_depth),
+                multipv=p,
+            )
             if isinstance(infos, dict):
                 infos = [infos]
-            top = _top_moves(infos)
-            eval_before_cp = top[0]["score_cp"] if top else 0
+            return _top_moves(infos)
 
-            played_rank: int | None = None
-            eval_after_cp: int | None = None
-            for rank, entry in enumerate(top, start=1):
-                if entry["move"] == uci:
-                    played_rank = rank
-                    eval_after_cp = entry["score_cp"]
-                    break
+        # One fast search for each main-line position. The result for position
+        # N+1 is reused as the after-move score for ply N.
+        analyses = [
+            analyse_at(index, depth, multipv)
+            for index in range(len(positions))
+        ]
 
-            board.push(move)
-            fen_after = board.fen()
+        candidates: list[tuple[int, int]] = []
+        for index, context in enumerate(move_context):
+            before_cp, after_cp, loss, _rank = _move_metrics(
+                analyses[index],
+                analyses[index + 1],
+                str(context["move"]),
+                positions[index],
+                positions[index + 1],
+            )
+            if loss >= self._analysis_deep_threshold_cp:
+                candidates.append((loss, index))
 
-            if eval_after_cp is None:
-                child = engine.analyse(board, limit, multipv=1)
-                child_info = child[0] if isinstance(child, list) else child
-                eval_after_cp = -_score_cp(child_info["score"])
+        deep_enabled = (
+            self._analysis_deep_max_moves > 0
+            and self._analysis_deep_depth > depth
+        )
+        if deep_enabled:
+            deep_move_indexes = {
+                index
+                for _priority, index in sorted(candidates, reverse=True)[
+                    : self._analysis_deep_max_moves
+                ]
+            }
+        else:
+            deep_move_indexes = set()
 
+        # Critical moves need multiple candidate lines before the move and one
+        # accurate result after it. Adjacent critical moves share the same
+        # position search instead of analyzing it twice.
+        deep_requirements: dict[int, int] = {}
+        for index in deep_move_indexes:
+            deep_requirements[index] = max(
+                deep_requirements.get(index, 1),
+                self._analysis_deep_multipv,
+            )
+            deep_requirements[index + 1] = max(
+                deep_requirements.get(index + 1, 1),
+                1,
+            )
+        for index, p in sorted(deep_requirements.items()):
+            analyses[index] = analyse_at(index, self._analysis_deep_depth, p)
+
+        moves_out: list[dict[str, Any]] = []
+        for index, context in enumerate(move_context):
+            top = analyses[index]
+            eval_before_cp, eval_after_cp, centipawn_loss, played_rank = (
+                _move_metrics(
+                    top,
+                    analyses[index + 1],
+                    str(context["move"]),
+                    positions[index],
+                    positions[index + 1],
+                )
+            )
             played_best = played_rank == 1
-            centipawn_loss = max(0, eval_before_cp - eval_after_cp)
             classification = heuristics.classify_category(
                 centipawn_loss, played_best, eval_before_cp, eval_after_cp
             )
 
             moves_out.append(
                 {
-                    "ply": ply,
-                    "move_number": move_number,
-                    "side": side,
-                    "move": uci,
-                    "san": san,
+                    **context,
                     "classification": classification,
                     "centipawn_loss": centipawn_loss,
                     "evaluation_before_cp": eval_before_cp,
@@ -167,8 +269,6 @@ class LocalEngine:
                     "evaluation_change_cp": eval_after_cp - eval_before_cp,
                     "played_rank": played_rank,
                     "top_moves": top,
-                    "fen_before": fen_before,
-                    "fen_after": fen_after,
                 }
             )
 
@@ -178,6 +278,16 @@ class LocalEngine:
             "mode": "local",
             "depth": depth,
             "multipv": multipv,
+            "adaptive": {
+                "enabled": deep_enabled,
+                "deep_depth": self._analysis_deep_depth,
+                "deep_multipv": self._analysis_deep_multipv,
+                "threshold_cp": self._analysis_deep_threshold_cp,
+                "max_moves": self._analysis_deep_max_moves,
+                "deepened_plies": sorted(index + 1 for index in deep_move_indexes),
+                "base_positions": len(positions),
+                "deep_positions": len(deep_requirements),
+            },
         }
 
     def close(self) -> None:

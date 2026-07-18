@@ -28,9 +28,13 @@ def analyzed_game_analyses(conn: Connection, limit: int | None = None) -> list[d
         cur.execute(
             f"""
             SELECT ga.id AS game_analysis_id, ga.game_id,
-                   ga.player_id AS source_player_id, g.pgn
+                   ga.player_id AS source_player_id, g.pgn,
+                   g.time_class, g.end_time AS played_at,
+                   CASE WHEN pg.side = 'white' THEN g.black_username ELSE g.white_username END
+                       AS opponent_username
             FROM game_analyses ga
             JOIN chesscom_games g ON g.id = ga.game_id
+            JOIN player_games pg ON pg.game_id = ga.game_id AND pg.player_id = ga.player_id
             WHERE g.pgn IS NOT NULL AND g.pgn <> ''
             ORDER BY ga.created_at DESC
             {clause}
@@ -126,6 +130,9 @@ def _record(game: dict[str, Any], gp: GamePuzzle) -> Optional[dict[str, Any]]:
         "mate_in": mate_in,
         "difficulty": _difficulty(num_plies, cooked.is_mate, mate_in),
         "quality_score": _quality(num_plies, cooked.is_mate),
+        "time_class": game.get("time_class"),
+        "opponent_username": game.get("opponent_username"),
+        "played_at": game.get("played_at"),
     }
 
 

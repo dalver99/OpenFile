@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Literal, Optional
 
 import chess
 import chess.pgn
@@ -38,7 +38,23 @@ MATE_SOON = Mate(15)
 
 # How decisively the best move must beat the second best (in win-chance units,
 # range -1..1) for the position to have a single defensible solution.
-ONLY_MOVE_WIN_CHANCE_GAP = 0.7
+# Middle ground between the original 0.7 quality bar and the 0.5 high-yield
+# experiment. Alternate moves must still be meaningfully worse.
+ONLY_MOVE_WIN_CHANCE_GAP = 0.6
+
+# How much the winner's win-chance must jump, ply to ply, for a position to
+# even be *attempted* as a puzzle start. This used to be 0.6, which in
+# centipawn terms works out to a ~350-800cp swing depending on the starting
+# eval -- far more than a "chess.com blunder"-sized swing. The former 0.35
+# high-yield setting admitted too many ordinary advantages, so 0.45 keeps a
+# broader funnel while requiring a clearer tactical turn.
+ADVANTAGE_WIN_CHANCE_GAP = 0.45
+
+# Below this final evaluation, we still require the winner to have been
+# materially behind (a real "swindle"), otherwise a modest advantage that
+# didn't need a material sacrifice isn't puzzle-worthy. 300cp is a middle
+# ground between the original 400cp threshold and the relaxed 200cp setting.
+ADVANTAGE_MATERIAL_EXEMPT_CP = 300
 
 
 @dataclass
@@ -58,6 +74,18 @@ class CookedPuzzle:
     solution_uci: list[str]
     final_cp: Optional[int]
     is_mate: bool
+
+
+@dataclass
+class PuzzleCandidate:
+    node: "chess.pgn.ChildNode"
+    board: chess.Board
+    winner: Color
+    prev_score: Score
+    score: Score
+    kind: Literal["mate", "advantage"]
+    swing_cp: Optional[int]
+    priority: float
 
 
 def win_chances(score: Score) -> float:
@@ -90,20 +118,58 @@ def is_up_in_material(board: chess.Board, side: Color) -> bool:
 
 @dataclass(frozen=True)
 class GeneratorConfig:
-    # Skip very short puzzles (a single solver move / a lone mate-in-one).
+    # Prefer multi-ply puzzles; an optional fallback can accept shorter ones.
     min_solution_plies: int = 3
     allow_mate_in_one: bool = False
+    fallback_min_solution_plies: int | None = None
+    # Bound expensive engine work on games with many apparent swings.
+    max_candidates: int = 6
+    max_solution_plies: int = 11
 
 
 class LichessStyleGenerator:
     def __init__(self, engine: EngineClient, config: GeneratorConfig | None = None):
         self.engine = engine
         self.config = config or GeneratorConfig()
+        self._line_cache: dict[tuple[str, int], list] = {}
+        self.last_stats: dict[str, Any] = {}
+
+    def _reset_stats(self) -> None:
+        self.last_stats = {
+            "positions_scanned": 0,
+            "candidate_positions": 0,
+            "candidates_attempted": 0,
+            "fallback_attempts": 0,
+            "fallback_used": False,
+            "engine_calls": 0,
+            "cache_hits": 0,
+            "line_limit_rejections": 0,
+            "mate_rejections": 0,
+            "advantage_rejections": 0,
+            "accepted": False,
+        }
+
+    def _lines(self, board: chess.Board, multipv: int) -> list:
+        fen = board.fen()
+        for cached_p in range(multipv, 3):
+            cached = self._line_cache.get((fen, cached_p))
+            if cached is not None:
+                self.last_stats["cache_hits"] += 1
+                return cached[:multipv]
+
+        lines = self.engine.analyse_position(board, multipv=multipv)
+        self.last_stats["engine_calls"] += 1
+        if len(self._line_cache) >= 512:
+            self._line_cache.clear()
+        self._line_cache[(fen, multipv)] = lines
+        return lines
 
     # --- engine helpers -----------------------------------------------------
     def _move_pair(self, board: chess.Board, winner: Color) -> MovePair:
         # winner is the side to move here, so line scores are already its POV.
-        lines = self.engine.analyse_position(board, multipv=2)
+        lines = self._lines(board, multipv=2)
+        if not lines or lines[0].move is None:
+            raise RuntimeError("Stockfish returned no legal candidate move.")
         best = lines[0]
         second = lines[1] if len(lines) > 1 else None
         return MovePair(
@@ -116,7 +182,8 @@ class LichessStyleGenerator:
         )
 
     def _best_defense(self, board: chess.Board) -> Optional[Move]:
-        return self.engine.best_move(board)
+        lines = self._lines(board, multipv=1)
+        return lines[0].move if lines else None
 
     # --- "only move" test ---------------------------------------------------
     def _is_only_move(self, pair: MovePair) -> bool:
@@ -127,9 +194,17 @@ class LichessStyleGenerator:
         return win_chances(pair.best_score) > win_chances(pair.second_score) + ONLY_MOVE_WIN_CHANCE_GAP
 
     # --- solution cooking ---------------------------------------------------
-    def _cook_mate(self, board: chess.Board, winner: Color) -> Optional[list[Move]]:
+    def _cook_mate(
+        self,
+        board: chess.Board,
+        winner: Color,
+        remaining_plies: int,
+    ) -> Optional[list[Move]]:
         if board.is_game_over():
             return []
+        if remaining_plies <= 0:
+            self.last_stats["line_limit_rejections"] += 1
+            return None
         if board.turn == winner:
             pair = self._move_pair(board, winner)
             if pair.best_score < MATE_SOON:
@@ -141,13 +216,21 @@ class LichessStyleGenerator:
                 return None
         child = board.copy(stack=False)
         child.push(move)
-        follow_up = self._cook_mate(child, winner)
+        follow_up = self._cook_mate(child, winner, remaining_plies - 1)
         if follow_up is None:
             return None
         return [move] + follow_up
 
-    def _cook_advantage(self, board: chess.Board, winner: Color) -> Optional[list[MovePair]]:
+    def _cook_advantage(
+        self,
+        board: chess.Board,
+        winner: Color,
+        remaining_plies: int,
+    ) -> Optional[list[MovePair]]:
         if board.is_repetition(2):
+            return None
+        if remaining_plies <= 0:
+            self.last_stats["line_limit_rejections"] += 1
             return None
         if board.turn == winner:
             pair = self._move_pair(board, winner)
@@ -158,7 +241,11 @@ class LichessStyleGenerator:
             move = pair.best_move
             child = board.copy(stack=False)
             child.push(move)
-            follow_up = self._cook_advantage(child, winner)
+            follow_up = self._cook_advantage(
+                child,
+                winner,
+                remaining_plies - 1,
+            )
             if follow_up is None:
                 return None
             return [pair] + follow_up
@@ -169,15 +256,23 @@ class LichessStyleGenerator:
             child = board.copy(stack=False)
             child.push(move)
             defender_pair = MovePair(board, winner, move, Cp(0), None, None)
-            follow_up = self._cook_advantage(child, winner)
+            follow_up = self._cook_advantage(
+                child,
+                winner,
+                remaining_plies - 1,
+            )
             if follow_up is None:
                 return None
             return [defender_pair] + follow_up
 
     # --- position gate ------------------------------------------------------
-    def _cook_from(
-        self, board: chess.Board, winner: Color, prev_score: Score, score: Score
-    ) -> Optional[CookedPuzzle]:
+    def _start_kind(
+        self,
+        board: chess.Board,
+        winner: Color,
+        prev_score: Score,
+        score: Score,
+    ) -> Literal["mate", "advantage"] | None:
         if board.legal_moves.count() < 2:
             return None
         if prev_score > Cp(300) and score < MATE_SOON:
@@ -190,20 +285,53 @@ class LichessStyleGenerator:
                 return None
 
         if score > MATE_SOON:
-            line = self._cook_mate(board.copy(stack=False), winner)
-            if not line or len(line) < self.config.min_solution_plies:
+            return "mate"
+
+        if (
+            score >= Cp(200)
+            and win_chances(score)
+            > win_chances(prev_score) + ADVANTAGE_WIN_CHANCE_GAP
+        ):
+            if (
+                score < Cp(ADVANTAGE_MATERIAL_EXEMPT_CP)
+                and material_diff(board, winner) > -1
+            ):
+                return None
+            return "advantage"
+        return None
+
+    def _cook_from(
+        self,
+        candidate: PuzzleCandidate,
+        min_solution_plies: int,
+    ) -> Optional[CookedPuzzle]:
+        board = candidate.board
+        winner = candidate.winner
+
+        if candidate.kind == "mate":
+            line = self._cook_mate(
+                board.copy(stack=False),
+                winner,
+                self.config.max_solution_plies,
+            )
+            if not line or len(line) < min_solution_plies:
+                self.last_stats["mate_rejections"] += 1
                 return None
             return CookedPuzzle(board.fen(), winner, [m.uci() for m in line], None, True)
 
-        if score >= Cp(200) and win_chances(score) > win_chances(prev_score) + 0.6:
-            if score < Cp(400) and material_diff(board, winner) > -1:
-                return None
-            pairs = self._cook_advantage(board.copy(stack=False), winner)
+        if candidate.kind == "advantage":
+            pairs = self._cook_advantage(
+                board.copy(stack=False),
+                winner,
+                self.config.max_solution_plies,
+            )
             if not pairs:
+                self.last_stats["advantage_rejections"] += 1
                 return None
             while pairs and (len(pairs) % 2 == 0 or pairs[-1].second_move is None):
                 pairs = pairs[:-1]
-            if len(pairs) < self.config.min_solution_plies:
+            if len(pairs) < min_solution_plies:
+                self.last_stats["advantage_rejections"] += 1
                 return None
             final_cp = pairs[-1].best_score.score()
             return CookedPuzzle(
@@ -211,43 +339,105 @@ class LichessStyleGenerator:
             )
         return None
 
+    def _collect_candidates(
+        self,
+        game: chess.pgn.Game,
+        eval_map: dict[int, PovScore],
+    ) -> list[PuzzleCandidate]:
+        candidates: list[PuzzleCandidate] = []
+        prev_score: Score = Cp(20)
+        board = game.board()
+
+        for node in game.mainline():
+            if node.move is None:
+                continue
+            board.push(node.move)
+            self.last_stats["positions_scanned"] += 1
+
+            white_eval = eval_map.get(node.ply())
+            if white_eval is None:
+                continue
+
+            winner = board.turn
+            score = white_eval.pov(winner)
+            kind = self._start_kind(board, winner, prev_score, score)
+            if kind is not None:
+                swing_cp = _swing_cp(prev_score, score)
+                mate_distance = score.mate()
+                priority = (
+                    1_000_000 - abs(mate_distance or 0)
+                    if kind == "mate"
+                    else float(swing_cp or 0)
+                )
+                candidates.append(
+                    PuzzleCandidate(
+                        node=node,
+                        board=board.copy(stack=False),
+                        winner=winner,
+                        prev_score=prev_score,
+                        score=score,
+                        kind=kind,
+                        swing_cp=swing_cp,
+                        priority=priority,
+                    )
+                )
+
+            prev_score = -score
+
+        candidates.sort(
+            key=lambda candidate: (candidate.priority, candidate.node.ply()),
+            reverse=True,
+        )
+        self.last_stats["candidate_positions"] = len(candidates)
+        return candidates
+
     # --- game walk ----------------------------------------------------------
     def analyze_game(
         self,
         game: chess.pgn.Game,
         eval_map: dict[int, PovScore],
     ) -> Optional["GamePuzzle"]:
-        """Walk a game and return the first quality puzzle found, or None.
+        """Return the strongest quality puzzle found within the work budget.
 
         ``eval_map`` maps ply number (of the node *after* a move) to a white-POV
         :class:`PovScore`. Only plies present in the map are considered as
         puzzle starts; the engine cooks (and validates) the solution.
         """
-        prev_score: Score = Cp(20)
-        board = game.board()
-        for node in game.mainline():
-            if node.move is None:
-                continue
-            ply = node.ply()
-            board.push(node.move)
-
-            white_eval = eval_map.get(ply)
-            if white_eval is None:
-                continue
-
-            winner = board.turn
-            score = white_eval.pov(winner)
-
-            cooked = self._cook_from(board.copy(stack=False), winner, prev_score, score)
+        self._reset_stats()
+        candidates = self._collect_candidates(game, eval_map)
+        attempted = candidates[: self.config.max_candidates]
+        for candidate in attempted:
+            self.last_stats["candidates_attempted"] += 1
+            cooked = self._cook_from(
+                candidate,
+                self.config.min_solution_plies,
+            )
             if cooked is not None:
+                self.last_stats["accepted"] = True
                 return GamePuzzle(
-                    node=node,
-                    mistake_ply=ply,
+                    node=candidate.node,
+                    mistake_ply=candidate.node.ply(),
                     cooked=cooked,
-                    swing_cp=_swing_cp(prev_score, score),
+                    swing_cp=candidate.swing_cp,
                 )
 
-            prev_score = -score
+        fallback_min = self.config.fallback_min_solution_plies
+        if (
+            fallback_min is not None
+            and fallback_min < self.config.min_solution_plies
+        ):
+            for candidate in attempted:
+                self.last_stats["fallback_attempts"] += 1
+                cooked = self._cook_from(candidate, fallback_min)
+                if cooked is not None:
+                    self.last_stats["accepted"] = True
+                    self.last_stats["fallback_used"] = True
+                    return GamePuzzle(
+                        node=candidate.node,
+                        mistake_ply=candidate.node.ply(),
+                        cooked=cooked,
+                        swing_cp=candidate.swing_cp,
+                    )
         return None
 
 

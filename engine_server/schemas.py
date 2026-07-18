@@ -44,3 +44,7 @@ class GameAnalyzeRequest(BaseModel):
     )
     depth: int = Field(default=10, ge=1, le=30)
     p: int = Field(default=3, ge=1, le=10, description="Number of candidate lines to compare.")
+    deep_depth: int = Field(default=20, ge=1, le=30)
+    deep_p: int = Field(default=3, ge=1, le=10)
+    deep_threshold_cp: int = Field(default=60, ge=1, le=10_000)
+    deep_max_moves: int = Field(default=12, ge=0, le=200)
