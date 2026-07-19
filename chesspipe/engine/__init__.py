@@ -1,8 +1,6 @@
 """Engine backend selection.
 
-``build_engine(settings)`` returns a local or remote :class:`EngineClient`
-based on ``ENGINE_MODE``. Both implement the same interface, so callers never
-branch on the backend.
+``build_engine(settings)`` returns the configured local UCI engine.
 """
 
 from chesspipe.engine.base import EngineClient, Line

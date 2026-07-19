@@ -21,11 +21,13 @@ import {
 } from "@/lib/review";
 import EvaluationBar from "@/components/chess/EvaluationBar";
 import EvaluationGraph from "@/components/chess/EvaluationGraph";
+import { lichessAnalysisUrl } from "@/lib/lichess";
+import FavoriteButton from "@/features/games/FavoriteButton";
 
 const Board = dynamic(() => import("@/components/chess/Board"), {
   ssr: false,
   loading: () => (
-    <div className="aspect-square w-full animate-pulse rounded-xl bg-stone-200 dark:bg-stone-800" />
+    <div className="aspect-square w-full animate-pulse bg-stone-200 dark:bg-stone-800" />
   ),
 });
 
@@ -52,24 +54,47 @@ type RetryState = {
 };
 
 let moveAudioContext: AudioContext | null = null;
+const moveSoundBuffers = new Map<string, AudioBuffer>();
+
+function moveSoundBuffer(context: AudioContext, capture: boolean): AudioBuffer {
+  const key = capture ? "capture" : "move";
+  const cached = moveSoundBuffers.get(key);
+  if (cached) return cached;
+  const duration = capture ? 0.18 : 0.11;
+  const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let index = 0; index < data.length; index += 1) {
+    const time = index / context.sampleRate;
+    const impact = Math.exp(-time * 42)
+      * (Math.sin(time * Math.PI * 2 * 340) + 0.45 * Math.sin(time * Math.PI * 2 * 760));
+    const secondTime = time - 0.055;
+    const secondImpact = capture && secondTime > 0
+      ? Math.exp(-secondTime * 38)
+        * (Math.sin(secondTime * Math.PI * 2 * 250) + 0.35 * Math.sin(secondTime * Math.PI * 2 * 620))
+      : 0;
+    const woodNoise = (Math.random() * 2 - 1) * Math.exp(-time * 65) * 0.18;
+    data[index] = (impact * 0.32 + secondImpact * 0.28 + woodNoise) * 0.55;
+  }
+  moveSoundBuffers.set(key, buffer);
+  return buffer;
+}
 
 function emitMoveSound(capture: boolean) {
   moveAudioContext ??= new AudioContext();
   const context = moveAudioContext;
   if (context.state === "suspended") void context.resume();
-  const now = context.currentTime;
-  const oscillator = context.createOscillator();
+  const source = context.createBufferSource();
+  const filter = context.createBiquadFilter();
   const gain = context.createGain();
-  oscillator.type = capture ? "square" : "triangle";
-  oscillator.frequency.setValueAtTime(capture ? 128 : 210, now);
-  oscillator.frequency.exponentialRampToValueAtTime(capture ? 82 : 165, now + 0.07);
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(capture ? 0.09 : 0.055, now + 0.008);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + (capture ? 0.12 : 0.085));
-  oscillator.connect(gain);
+  source.buffer = moveSoundBuffer(context, capture);
+  filter.type = "lowpass";
+  filter.frequency.value = capture ? 1500 : 1900;
+  filter.Q.value = 0.7;
+  gain.gain.value = capture ? 0.7 : 0.58;
+  source.connect(filter);
+  filter.connect(gain);
   gain.connect(context.destination);
-  oscillator.start(now);
-  oscillator.stop(now + (capture ? 0.13 : 0.095));
+  source.start();
 }
 
 function squarePair(uci: string | null): string[] {
@@ -141,6 +166,35 @@ const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9 } as const;
 const initialPieces = { p: 8, n: 2, b: 2, r: 2, q: 1 } as const;
 type MaterialColor = "white" | "black";
 
+function formatClock(seconds: number | null): string | null {
+  if (seconds == null || !Number.isFinite(seconds)) return null;
+  const safe = Math.max(0, seconds);
+  const minutes = Math.floor(safe / 60);
+  const wholeSeconds = Math.floor(safe % 60);
+  const tenths = safe < 20 ? `.${Math.floor((safe % 1) * 10)}` : "";
+  return `${minutes}:${String(wholeSeconds).padStart(2, "0")}${tenths}`;
+}
+
+function initialClock(timeControl: string | null): number | null {
+  if (!timeControl || timeControl.includes("/")) return null;
+  const seconds = Number(timeControl.split("+")[0]);
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+function clockAtPly(
+  moves: ReviewMove[],
+  ply: number,
+  side: "white" | "black",
+  fallback: number | null,
+): number | null {
+  for (let index = Math.min(ply, moves.length) - 1; index >= 0; index -= 1) {
+    if (moves[index].side === side && moves[index].clock_seconds != null) {
+      return moves[index].clock_seconds;
+    }
+  }
+  return fallback;
+}
+
 function materialStatus(fen: string): Record<MaterialColor, { captured: string; advantage: number }> {
   const counts: Record<MaterialColor, Record<keyof typeof pieceValues, number>> = {
     white: { p: 0, n: 0, b: 0, r: 0, q: 0 },
@@ -178,6 +232,7 @@ function PlayerStrip({
   color,
   captured,
   advantage,
+  clockSeconds,
 }: {
   name: string;
   rating: number | null;
@@ -185,34 +240,22 @@ function PlayerStrip({
   color: "white" | "black";
   captured: string;
   advantage: number;
+  clockSeconds: number | null;
 }) {
+  const clock = formatClock(clockSeconds);
   return (
-    <div className="flex h-12 items-center justify-between rounded-xl bg-white px-3 shadow-sm ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-700">
-      <div className="flex min-w-0 items-center gap-2.5">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-stone-900 text-sm font-bold text-white">
-          {name.slice(0, 1).toUpperCase()}
-        </span>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-stone-900 dark:text-stone-50">{name}</p>
-          <p className="flex items-center gap-2 text-xs text-stone-400">
-            <span>{rating ?? "Unrated"}</span>
-            {captured ? <span className="tracking-[-0.08em] text-stone-600 dark:text-stone-300" title="Captured material">{captured}</span> : null}
-            {advantage > 0 ? <strong className="text-emerald-700 dark:text-emerald-400">+{advantage}</strong> : null}
-          </p>
-        </div>
+    <div className="flex h-9 items-center justify-between bg-white px-2 ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-700">
+      <div className="flex min-w-0 items-center gap-2 text-xs">
+        <strong className="truncate text-stone-900 dark:text-stone-50">{name}</strong>
+        <span className="text-stone-400">{rating ?? "—"}</span>
+        {captured ? <span className="truncate tracking-[-0.08em] text-stone-500 dark:text-stone-400" title="Captured material">{captured}</span> : null}
+        {advantage > 0 ? <strong className="text-brand-700 dark:text-brand-400">+{advantage}</strong> : null}
       </div>
       <div className="flex items-center gap-2">
-        <strong className="rounded-lg bg-stone-100 px-2 py-1 text-sm text-stone-800 dark:bg-stone-800 dark:text-stone-100">
+        <strong className="text-[11px] text-stone-400" title="Accuracy">
           {accuracy}
         </strong>
-        <i
-          className={`h-4 w-4 rounded-full border ${
-            color === "white"
-              ? "border-stone-300 bg-white"
-              : "border-stone-900 bg-stone-900"
-          }`}
-          aria-label={`${color} pieces`}
-        />
+        {clock ? <strong className={`min-w-14 text-right font-mono text-sm tabular-nums ${color === "white" ? "text-stone-800 dark:text-stone-100" : "text-stone-700 dark:text-stone-200"}`}>{clock}</strong> : null}
       </div>
     </div>
   );
@@ -228,7 +271,9 @@ export default function GameReview({ review }: { review: GameReviewData }) {
   const [bookMoves, setBookMoves] = useState<Record<number, BookMoveInfo>>({});
   const [soundsEnabled, setSoundsEnabled] = useState(true);
   const [retry, setRetry] = useState<RetryState | null>(null);
+  const [showPracticePrompt, setShowPracticePrompt] = useState(false);
   const notationRef = useRef<HTMLDivElement>(null);
+  const practicePromptSeen = useRef(false);
 
   const selected = selectedIndex > 0 ? review.moves[selectedIndex - 1] : null;
   const game = review.game;
@@ -340,6 +385,9 @@ export default function GameReview({ review }: { review: GameReviewData }) {
         }
       : null;
   const material = useMemo(() => materialStatus(boardFen), [boardFen]);
+  const startingClock = initialClock(game.time_control);
+  const whiteClock = clockAtPly(review.moves, selectedIndex, "white", startingClock);
+  const blackClock = clockAtPly(review.moves, selectedIndex, "black", startingClock);
 
   const playMoveSound = useCallback((capture = false) => {
     if (!soundsEnabled) return;
@@ -588,6 +636,19 @@ export default function GameReview({ review }: { review: GameReviewData }) {
   }, [activeSideline?.cursor, activeSideline?.id, selectedIndex]);
 
   useEffect(() => {
+    if (
+      activeSideline
+      || retryActive
+      || !trainingMoves.length
+      || selectedIndex !== review.moves.length
+      || practicePromptSeen.current
+    ) return;
+    practicePromptSeen.current = true;
+    const timer = window.setTimeout(() => setShowPracticePrompt(true), 0);
+    return () => window.clearTimeout(timer);
+  }, [activeSideline, retryActive, review.moves.length, selectedIndex, trainingMoves.length]);
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, textarea, select")) return;
@@ -667,6 +728,7 @@ export default function GameReview({ review }: { review: GameReviewData }) {
   const analysisHref = `/analysis?game=${game.id}&ply=${analysisAnchorPly}${
     analysisLine ? `&line=${encodeURIComponent(analysisLine)}` : ""
   }`;
+  const lichessHref = lichessAnalysisUrl(boardFen, game.side);
 
   function navigateTo(index: number) {
     if (activeSideline) {
@@ -750,9 +812,9 @@ export default function GameReview({ review }: { review: GameReviewData }) {
 
   return (
     <div className="space-y-8">
-      <section className="grid items-start gap-5 xl:grid-cols-[minmax(540px,0.98fr)_minmax(430px,1.02fr)]">
+      <section className="grid items-start gap-4 xl:grid-cols-[minmax(650px,1.18fr)_minmax(430px,0.82fr)] 2xl:grid-cols-[minmax(760px,1.3fr)_minmax(460px,0.7fr)]">
         <div className="xl:sticky xl:top-20">
-          <div className="mx-auto w-full max-w-[720px] xl:w-[calc(100vh-15.5rem)] xl:max-w-full">
+          <div className="mx-auto w-full max-w-[920px] xl:w-[min(calc(100dvh-10.5rem),100%)] xl:max-w-full">
             <PlayerStrip
               name={opponentName}
               rating={opponentRating}
@@ -760,12 +822,13 @@ export default function GameReview({ review }: { review: GameReviewData }) {
               color={game.side === "white" ? "black" : "white"}
               captured={material[game.side === "white" ? "black" : "white"].captured}
               advantage={material[game.side === "white" ? "black" : "white"].advantage}
+              clockSeconds={game.side === "white" ? blackClock : whiteClock}
             />
-            <div className="my-2 grid grid-cols-[34px_minmax(0,1fr)] items-stretch gap-2">
+            <div className="my-1 grid grid-cols-[34px_minmax(0,1fr)] items-stretch gap-1">
               {retryConcealed ? (
-                <div className="grid place-items-center rounded-lg border border-stone-700 bg-stone-900 text-sm font-black text-stone-400" aria-label="Evaluation hidden during retry" title="Evaluation hidden during retry">?</div>
+                <div className="grid place-items-center border border-stone-700 bg-stone-900 text-sm font-black text-stone-400" aria-label="Evaluation hidden during retry" title="Evaluation hidden during retry">?</div>
               ) : <EvaluationBar cp={evaluation} />}
-              <div className="overflow-hidden rounded-xl bg-white shadow-md ring-1 ring-stone-300 dark:bg-stone-900 dark:ring-stone-700">
+              <div className="overflow-hidden bg-white shadow-md ring-1 ring-stone-300 dark:bg-stone-900 dark:ring-stone-700">
                 <Board
                   key={
                     activeSideline
@@ -797,6 +860,7 @@ export default function GameReview({ review }: { review: GameReviewData }) {
               color={game.side}
               captured={material[game.side].captured}
               advantage={material[game.side].advantage}
+              clockSeconds={game.side === "white" ? whiteClock : blackClock}
             />
             <div className="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-[11px] font-medium text-stone-500 dark:text-stone-400">
               <span className="flex items-center gap-1.5">
@@ -820,7 +884,7 @@ export default function GameReview({ review }: { review: GameReviewData }) {
                   ? "Saving…"
                   : retryActive
                     ? "Find a better move · Esc to exit"
-                    : "Drag a piece to explore · right-drag for arrows"}
+                    : "Drag a piece to explore · right-click marks · right-drag arrows"}
               </span>
               <button
                 type="button"
@@ -839,11 +903,11 @@ export default function GameReview({ review }: { review: GameReviewData }) {
           </div>
         </div>
 
-        <aside className="flex min-h-[760px] flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 xl:h-[calc(100vh-8.25rem)] xl:min-h-0">
+        <aside className="relative flex min-h-[760px] flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 xl:h-[calc(100vh-8.25rem)] xl:min-h-0">
           <div className="h-[190px] shrink-0 overflow-y-auto border-b border-stone-100 p-5 dark:border-stone-800">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-brand-700">
                   {activeSideline
                     ? "Saved sideline"
                     : retryActive
@@ -854,19 +918,26 @@ export default function GameReview({ review }: { review: GameReviewData }) {
                         ? `Position after ${moveLabel(selected)}`
                         : "Game overview"}
                 </p>
-                <h1 className="mt-1 truncate text-xl font-bold tracking-tight text-stone-900 dark:text-stone-50">
-                  {activeSideline
-                    ? activeSideline.title
-                    : retryActive
-                      ? `Find a better move for ${game.side === "white" ? "White" : "Black"}`
-                    : selected
-                      ? moveLabel(selected)
-                      : `${playerName} vs ${opponentName}`}
-                </h1>
+                <div className="mt-1 flex min-w-0 items-center gap-2">
+                  {selected && !activeSideline && !retryActive ? (
+                    <span className="shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold text-white" style={{ background: meta.color }}>
+                      {meta.symbol} {meta.label}
+                    </span>
+                  ) : null}
+                  <h1 className="truncate text-xl font-bold tracking-tight text-stone-900 dark:text-stone-50">
+                    {activeSideline
+                      ? activeSideline.title
+                      : retryActive
+                        ? `Find a better move for ${game.side === "white" ? "White" : "Black"}`
+                      : selected
+                        ? moveLabel(selected)
+                        : `${playerName} vs ${opponentName}`}
+                  </h1>
+                </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {retryActive ? (
-                  <span className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-bold ${retryDone ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300"}`}>
+                  <span className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-bold ${retryDone ? "bg-brand-100 text-brand-700 dark:bg-brand-950 dark:text-brand-300" : "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300"}`}>
                     {retry?.status === "correct" ? "Solved" : retry?.status === "revealed" ? "Answer" : `${retry?.attempts ?? 0} ${retry?.attempts === 1 ? "try" : "tries"}`}
                   </span>
                 ) : activeSideline ? (
@@ -883,24 +954,36 @@ export default function GameReview({ review }: { review: GameReviewData }) {
                         ? "Save failed"
                         : "Saved"}
                   </span>
-                ) : selected ? (
-                  <span
-                    className="shrink-0 rounded-lg px-2.5 py-1 text-xs font-bold text-white"
-                    style={{ background: meta.color }}
-                  >
-                    {meta.symbol} {meta.label}
-                  </span>
                 ) : null}
                 <Link
                   href={analysisHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   prefetch={false}
-                  className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-800"
+                  className="rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-stone-700 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white"
                   title="Open this exact position in the local Stockfish analysis board"
                 >
                   Analysis ↗
                 </Link>
+                <FavoriteButton gameId={game.id} initialFavorite={game.is_favorite} showLabel />
+                <a
+                  href={game.chesscom_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-600 shadow-sm transition hover:border-stone-400 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
+                  title="Open the original game on Chess.com"
+                >
+                  Chess.com ↗
+                </a>
+                <a
+                  href={lichessHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-600 shadow-sm transition hover:border-brand-400 hover:text-brand-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
+                  title="Open the position currently on this board in Lichess"
+                >
+                  Lichess ↗
+                </a>
               </div>
             </div>
             <p className="mt-3 text-sm leading-6 text-stone-600 dark:text-stone-300">
@@ -931,9 +1014,7 @@ export default function GameReview({ review }: { review: GameReviewData }) {
                   >
                     Show answer
                   </button>
-                ) : (
-                  <button type="button" onClick={startNextRetry} className="rounded-lg bg-emerald-700 px-3 py-1 text-xs font-bold text-white hover:bg-emerald-800">Next retry</button>
-                )}
+                ) : null}
                 <button type="button" onClick={() => setRetry(null)} className="px-2 py-1 text-xs font-semibold text-stone-500 hover:text-stone-900 dark:hover:text-stone-100">Exit practice</button>
               </div>
             ) : selected && !activeSideline ? (
@@ -1018,30 +1099,34 @@ export default function GameReview({ review }: { review: GameReviewData }) {
                                   : undefined
                               }
                               onClick={() => navigateTo(move.ply)}
-                              className={`flex min-w-0 items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left transition ${
+                              className={`flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition ${
                                 !activeSideline && selectedIndex === move.ply
-                                  ? "bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-950"
+                                  ? "bg-stone-200 text-stone-950 ring-1 ring-inset ring-stone-300 dark:bg-stone-700 dark:text-white dark:ring-stone-600"
                                   : "hover:bg-stone-100 dark:hover:bg-stone-800"
                               }`}
                             >
-                              <span className="truncate font-medium">
-                                {move.san}
-                              </span>
                               {moveMeta.symbol ? (
                                 <span
-                                  className="text-xs font-bold"
+                                  className="grid h-5 min-w-5 shrink-0 place-items-center rounded px-1 text-[10px] font-black"
                                   style={{
                                     color:
                                       !activeSideline &&
                                       selectedIndex === move.ply
-                                        ? "#bef264"
+                                        ? "#ffffff"
                                         : moveMeta.color,
+                                    background:
+                                      !activeSideline && selectedIndex === move.ply
+                                        ? moveMeta.color
+                                        : `${moveMeta.color}18`,
                                   }}
                                   title={moveMeta.label}
                                 >
                                   {moveMeta.symbol}
                                 </span>
                               ) : null}
+                              <span className="truncate font-medium">
+                                {move.san}
+                              </span>
                             </button>
                           );
                         })}
@@ -1057,8 +1142,16 @@ export default function GameReview({ review }: { review: GameReviewData }) {
 
           <div className="shrink-0 border-t border-stone-100 bg-stone-50 p-2 dark:border-stone-800 dark:bg-stone-950/50">
             {retryActive ? (
-              <div className="grid h-28 place-items-center rounded-2xl border border-dashed border-violet-300 bg-violet-50 text-center dark:border-violet-800 dark:bg-violet-950/30">
-                <div><p className="text-sm font-bold text-violet-800 dark:text-violet-300">{retryDone ? `Best branch ${formatEvaluation(evaluation)}` : "Evaluation hidden"}</p><p className="mt-1 text-xs text-violet-600 dark:text-violet-400">{retryDone ? "Exit practice to compare it with the recorded-game graph." : "Commit to a move before seeing the swing."}</p></div>
+              <div className="grid min-h-28 place-items-center rounded-2xl border border-dashed border-violet-300 bg-violet-50 p-3 text-center dark:border-violet-800 dark:bg-violet-950/30">
+                <div>
+                  <p className="text-sm font-bold text-violet-800 dark:text-violet-300">{retryDone ? `Best branch ${formatEvaluation(evaluation)}` : "Evaluation hidden"}</p>
+                  <p className="mt-1 text-xs text-violet-600 dark:text-violet-400">{retryDone ? "Ready for the next turning point?" : "Commit to a move before seeing the swing."}</p>
+                  {retryDone ? (
+                    <button type="button" onClick={startNextRetry} className="mt-2 rounded-lg bg-violet-600 px-4 py-2 text-xs font-black text-white shadow-sm transition hover:bg-violet-700">
+                      Next turning point →
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ) : (
               <EvaluationGraph
@@ -1105,12 +1198,22 @@ export default function GameReview({ review }: { review: GameReviewData }) {
                 aria-label={control.title}
                 onClick={control.action}
                 disabled={control.disabled}
-                className="rounded-xl border border-stone-200 bg-white py-2.5 text-lg font-semibold text-stone-700 shadow-sm transition hover:border-emerald-400 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-35 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:border-emerald-500 dark:hover:text-emerald-400"
+                className="rounded-xl border border-stone-200 bg-white py-2.5 text-lg font-semibold text-stone-700 shadow-sm transition hover:border-brand-400 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-35 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200 dark:hover:border-brand-500 dark:hover:text-brand-400"
               >
                 {control.label}
               </button>
             ))}
           </div>
+
+          {showPracticePrompt && trainingMoves.length ? (
+            <div className="absolute inset-x-4 bottom-20 z-30 rounded-2xl border border-violet-300 bg-white p-4 shadow-2xl dark:border-violet-800 dark:bg-stone-900">
+              <button type="button" onClick={() => setShowPracticePrompt(false)} className="absolute right-3 top-2 text-sm text-stone-400 hover:text-stone-700" aria-label="Dismiss practice suggestion">×</button>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-violet-600 dark:text-violet-400">Review complete</p>
+              <h3 className="mt-1 text-base font-black text-stone-900 dark:text-white">Now replay your turning points</h3>
+              <p className="mt-1 text-xs leading-5 text-stone-500">Practice {trainingMoves.length} critical {trainingMoves.length === 1 ? "position" : "positions"} without seeing the engine answer first.</p>
+              <button type="button" onClick={() => { setShowPracticePrompt(false); startRetry(trainingMoves[0]); }} className="mt-3 w-full rounded-lg bg-violet-600 px-3 py-2 text-xs font-black text-white hover:bg-violet-700">Start practice →</button>
+            </div>
+          ) : null}
         </aside>
       </section>
 
@@ -1136,7 +1239,7 @@ export default function GameReview({ review }: { review: GameReviewData }) {
               <p className="text-xs uppercase tracking-widest text-stone-500">
                 Review score
               </p>
-              <p className="mt-1 text-3xl font-black text-emerald-400">
+              <p className="mt-1 text-3xl font-black text-brand-400">
                 {playerAccuracy}
               </p>
             </div>
@@ -1193,7 +1296,7 @@ export default function GameReview({ review }: { review: GameReviewData }) {
             authenticated Lichess Masters explorer.
           </p>
           {trainingMoves.length ? (
-            <button type="button" onClick={() => startRetry(trainingMoves[0])} className="mt-4 flex w-full items-center justify-between rounded-xl bg-violet-600 px-4 py-3 text-left text-sm font-bold text-white transition hover:bg-violet-700">
+            <button type="button" onClick={() => startRetry(trainingMoves[0])} className="mt-5 flex w-full items-center justify-between rounded-xl bg-violet-600 px-4 py-3.5 text-left text-sm font-black text-white shadow-lg shadow-violet-900/20 ring-4 ring-violet-100 transition hover:bg-violet-700 dark:ring-violet-950/60">
               <span>Practice your turning points</span><span>{trainingMoves.length} positions →</span>
             </button>
           ) : null}
@@ -1214,7 +1317,7 @@ export default function GameReview({ review }: { review: GameReviewData }) {
                   navigateTo(move.ply);
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
-                className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 hover:border-emerald-400 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
+                className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 hover:border-brand-400 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
               >
                 {moveLabel(move)}{" "}
                 {classificationMeta[move.classification]?.symbol}

@@ -9,33 +9,41 @@ import type {
   ReviewMove,
   ReviewSideline,
 } from "@/domain/games";
-import { pool } from "@/server/database/postgres";
+import { pool } from "@/server/database/sqlite";
 import { WEBUI_USER_ID } from "@/server/current-user";
-
-const requestedTimezone = process.env.WEBUI_TIMEZONE ?? "Asia/Seoul";
-try {
-  new Intl.DateTimeFormat("en-US", { timeZone: requestedTimezone }).format();
-} catch {
-  throw new Error(`Invalid WEBUI_TIMEZONE: ${requestedTimezone}`);
-}
-const WEBUI_TIMEZONE = requestedTimezone.replaceAll("'", "''");
 
 const gameColumns = `
          pg.id, g.white_username, g.black_username,
          g.white_rating, g.black_rating, g.white_result, g.black_result,
-         to_char(g.end_time AT TIME ZONE '${WEBUI_TIMEZONE}', 'YYYY-MM-DD') AS played_at,
+         substr(g.end_time, 1, 10) AS played_at,
          g.time_class, g.time_control, pg.side, pg.result, pg.rating_after,
          pg.status, pg.status_detail,
          CASE WHEN g.eco_url IS NULL THEN NULL
-              ELSE replace(regexp_replace(g.eco_url, '^.*/', ''), '-', ' ')
+              WHEN instr(g.eco_url, '/openings/') > 0
+              THEN replace(substr(g.eco_url, instr(g.eco_url, '/openings/') + 10), '-', ' ')
+              ELSE g.eco_url
          END AS opening,
          (ga.id IS NOT NULL) AS analyzed,
-         ga.depth AS analysis_depth`;
+         ga.depth AS analysis_depth,
+         EXISTS (
+           SELECT 1 FROM favorite_games fg
+           WHERE fg.player_game_id = pg.id AND fg.user_id = pg.player_id
+         ) AS is_favorite`;
 
 const gameFrom = `
   FROM player_games pg
   JOIN chesscom_games g ON g.id = pg.game_id
   LEFT JOIN game_analyses ga ON ga.player_game_id = pg.id`;
+
+function clockSeconds(value: string): number | null {
+  const parts = value.trim().split(":").map(Number);
+  if (!parts.length || parts.some((part) => !Number.isFinite(part))) return null;
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
+function pgnClocks(pgn: string): Array<number | null> {
+  return [...pgn.matchAll(/\[%clk\s+([^\]]+)\]/g)].map((match) => clockSeconds(match[1]));
+}
 
 export async function listGames(
   filters: GameListFilters,
@@ -51,6 +59,23 @@ export async function listGames(
   }
   if (filters.review === "reviewed") conditions.push("ga.id IS NOT NULL");
   if (filters.review === "waiting") conditions.push("ga.id IS NULL");
+  if (filters.favorite === "favorites") {
+    conditions.push(`EXISTS (
+      SELECT 1 FROM favorite_games fg
+      WHERE fg.player_game_id = pg.id AND fg.user_id = pg.player_id
+    )`);
+  }
+  if (filters.syncRunId !== null) {
+    params.push(filters.syncRunId);
+    conditions.push(`EXISTS (
+      SELECT 1
+      FROM sync_run_games srg
+      JOIN sync_runs sr ON sr.id = srg.sync_run_id
+      WHERE srg.player_game_id = pg.id
+        AND srg.sync_run_id = $${params.length}
+        AND sr.user_id = pg.player_id
+    )`);
+  }
   if (filters.query) {
     params.push(`%${filters.query}%`);
     const queryParam = `$${params.length}`;
@@ -79,13 +104,27 @@ export async function listGames(
      LIMIT $${listParams.length - 1} OFFSET $${listParams.length}`,
     listParams,
   );
-  return { games: rows as GameCard[], total, page, pageSize, totalPages };
+  return {
+    games: rows.map((row) => ({
+      ...row,
+      analyzed: Boolean(row.analyzed),
+      is_favorite: Boolean(row.is_favorite),
+    })) as GameCard[],
+    total,
+    page,
+    pageSize,
+    totalPages,
+  };
 }
 
 export async function getGameArchiveStats(): Promise<GameArchiveStats> {
   const { rows } = await pool.query<GameArchiveStats>(
     `SELECT count(*)::int AS total,
-            count(*) FILTER (WHERE ga.id IS NOT NULL)::int AS reviewed
+            count(*) FILTER (WHERE ga.id IS NOT NULL)::int AS reviewed,
+            count(*) FILTER (WHERE ga.id IS NULL)::int AS waiting,
+            count(*) FILTER (
+              WHERE ga.id IS NULL AND pg.status IN ('selected', 'analyzing')
+            )::int AS analyzing
      ${gameFrom}
      WHERE pg.player_id = $1 AND g.rules = 'chess'`,
     [WEBUI_USER_ID],
@@ -93,20 +132,58 @@ export async function getGameArchiveStats(): Promise<GameArchiveStats> {
   return {
     total: Number(rows[0]?.total ?? 0),
     reviewed: Number(rows[0]?.reviewed ?? 0),
+    waiting: Number(rows[0]?.waiting ?? 0),
+    analyzing: Number(rows[0]?.analyzing ?? 0),
   };
+}
+
+export async function listAnalysisCandidates(requestedLimit = 80): Promise<GameCard[]> {
+  const limit = Math.max(10, Math.min(200, requestedLimit));
+  const { rows } = await pool.query(
+    `SELECT ${gameColumns}
+     ${gameFrom}
+     WHERE pg.player_id = $1
+       AND g.rules = 'chess'
+       AND ga.id IS NULL
+     ORDER BY
+       CASE WHEN pg.status IN ('selected', 'analyzing') THEN 0 ELSE 1 END,
+       CASE WHEN EXISTS (
+         SELECT 1 FROM favorite_games fg
+         WHERE fg.player_game_id = pg.id AND fg.user_id = pg.player_id
+       ) THEN 0 ELSE 1 END,
+       CASE WHEN pg.result NOT IN (
+         'win', 'agreed', 'stalemate', 'repetition', 'insufficient',
+         '50move', 'timevsinsufficient'
+       ) THEN 0 ELSE 1 END,
+       g.end_time DESC,
+       pg.id DESC
+     LIMIT $2`,
+    [WEBUI_USER_ID, limit],
+  );
+  return rows.map((row) => ({
+    ...row,
+    analyzed: false,
+    is_favorite: Boolean(row.is_favorite),
+  })) as GameCard[];
 }
 
 export async function getGameReview(playerGameId: number): Promise<GameReview | null> {
   const { rows } = await pool.query(
-    `SELECT ${gameColumns}, g.chesscom_url, ga.engine_id,
-            to_char(ga.created_at AT TIME ZONE '${WEBUI_TIMEZONE}', 'YYYY-MM-DD HH24:MI') AS analysis_created_at
+    `SELECT ${gameColumns}, g.chesscom_url, g.pgn, ga.engine_id,
+            substr(ga.created_at, 1, 16) AS analysis_created_at
      ${gameFrom}
      WHERE pg.id = $1 AND pg.player_id = $2`,
     [playerGameId, WEBUI_USER_ID],
   );
   if (!rows.length) return null;
 
-  const game = rows[0] as GameReview["game"];
+  const { pgn, ...gameRow } = rows[0];
+  const clocks = pgnClocks(String(pgn ?? ""));
+  const game = {
+    ...gameRow,
+    analyzed: Boolean(rows[0].analyzed),
+    is_favorite: Boolean(rows[0].is_favorite),
+  } as GameReview["game"];
   if (!game.analyzed) return { game, moves: [], sidelines: [] };
 
   const moveResult = await pool.query(
@@ -122,7 +199,7 @@ export async function getGameReview(playerGameId: number): Promise<GameReview | 
   );
   const sidelineResult = await pool.query(
     `SELECT id, anchor_ply, start_fen, moves_uci, moves_san, title,
-            created_at::text, updated_at::text
+            created_at, updated_at
      FROM review_sidelines
      WHERE player_game_id = $1 AND user_id = $2
      ORDER BY updated_at DESC, id DESC`,
@@ -130,9 +207,47 @@ export async function getGameReview(playerGameId: number): Promise<GameReview | 
   );
   return {
     game,
-    moves: moveResult.rows as ReviewMove[],
-    sidelines: sidelineResult.rows as ReviewSideline[],
+    moves: moveResult.rows.map((row, index) => ({
+      ...row,
+      top_moves: typeof row.top_moves === "string" ? JSON.parse(row.top_moves) : row.top_moves,
+      clock_seconds: clocks[index] ?? null,
+    })) as ReviewMove[],
+    sidelines: sidelineResult.rows.map((row) => ({
+      ...row,
+      moves_uci: typeof row.moves_uci === "string" ? JSON.parse(row.moves_uci) : row.moves_uci,
+      moves_san: typeof row.moves_san === "string" ? JSON.parse(row.moves_san) : row.moves_san,
+    })) as ReviewSideline[],
   };
+}
+
+export async function setGameFavorite(
+  playerGameId: number,
+  favorite: boolean,
+): Promise<"missing" | "saved"> {
+  if (favorite) {
+    const result = await pool.query(
+      `INSERT INTO favorite_games (user_id, player_game_id)
+       SELECT $2, pg.id
+       FROM player_games pg
+       WHERE pg.id = $1 AND pg.player_id = $2
+       ON CONFLICT(user_id, player_game_id) DO UPDATE
+       SET created_at = favorite_games.created_at
+       RETURNING player_game_id`,
+      [playerGameId, WEBUI_USER_ID],
+    );
+    return result.rowCount ? "saved" : "missing";
+  }
+
+  const owned = await pool.query(
+    `SELECT id FROM player_games WHERE id = $1 AND player_id = $2`,
+    [playerGameId, WEBUI_USER_ID],
+  );
+  if (!owned.rowCount) return "missing";
+  await pool.query(
+    `DELETE FROM favorite_games WHERE player_game_id = $1 AND user_id = $2`,
+    [playerGameId, WEBUI_USER_ID],
+  );
+  return "saved";
 }
 
 export async function getSidelineAnchorFen(
@@ -185,20 +300,26 @@ export async function saveReviewSideline({
   const query = id == null
     ? `INSERT INTO review_sidelines
          (player_game_id, user_id, anchor_ply, start_fen, moves_uci, moves_san, title)
-       SELECT $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7
+       SELECT $1, $2, $3, $4, $5, $6, $7
        WHERE EXISTS (
          SELECT 1 FROM player_games WHERE id = $1 AND player_id = $2
        )
        RETURNING id, anchor_ply, start_fen, moves_uci, moves_san, title,
-                 created_at::text, updated_at::text`
+                 created_at, updated_at`
     : `UPDATE review_sidelines
-       SET anchor_ply = $3, start_fen = $4, moves_uci = $5::jsonb,
-           moves_san = $6::jsonb, title = $7, updated_at = now()
+       SET anchor_ply = $3, start_fen = $4, moves_uci = $5,
+           moves_san = $6, title = $7, updated_at = CURRENT_TIMESTAMP
        WHERE id = $8 AND player_game_id = $1 AND user_id = $2
        RETURNING id, anchor_ply, start_fen, moves_uci, moves_san, title,
-                 created_at::text, updated_at::text`;
+                 created_at, updated_at`;
   const { rows } = await pool.query(query, id == null ? params : [...params, id]);
-  return rows.length ? rows[0] as ReviewSideline : null;
+  if (!rows.length) return null;
+  const row = rows[0];
+  return {
+    ...row,
+    moves_uci: typeof row.moves_uci === "string" ? JSON.parse(row.moves_uci) : row.moves_uci,
+    moves_san: typeof row.moves_san === "string" ? JSON.parse(row.moves_san) : row.moves_san,
+  } as ReviewSideline;
 }
 
 export async function deleteReviewSideline(
@@ -236,27 +357,58 @@ export async function getGameAnalysisStatus(playerGameId: number): Promise<{
   };
 }
 
-export async function queueGameAnalysis(playerGameId: number): Promise<
+export async function queueGameAnalysis(playerGameId: number, force = false): Promise<
   "missing" | "ready" | "running" | "queued"
 > {
   const state = await getGameAnalysisStatus(playerGameId);
   if (!state.found) return "missing";
-  if (state.analyzed) return "ready";
+  if (state.analyzed && !force) return "ready";
   if (state.status === "analyzing") return "running";
 
   const result = await pool.query(
     `UPDATE player_games
      SET status = 'selected', status_detail = 'web_review_queued', status_updated_at = now()
      WHERE id = $1 AND player_id = $2
+       AND status NOT IN ('analyzing', 'generating')
        AND (
-         status IN ('ingested', 'failed')
-         OR (status = 'selected' AND status_detail IS DISTINCT FROM 'web_review_queued')
+         $3 = 1
+         OR (
+           status IN ('ingested', 'failed')
+           OR (status = 'selected' AND status_detail IS DISTINCT FROM 'web_review_queued')
+         )
        )
-       AND NOT EXISTS (SELECT 1 FROM game_analyses ga WHERE ga.player_game_id = player_games.id)
+       AND (
+         $3 = 1
+         OR NOT EXISTS (SELECT 1 FROM game_analyses ga WHERE ga.player_game_id = player_games.id)
+       )
      RETURNING id`,
-    [playerGameId, WEBUI_USER_ID],
+    [playerGameId, WEBUI_USER_ID, force ? 1 : 0],
   );
   return result.rowCount ? "queued" : "running";
+}
+
+export async function queueGameAnalyses(playerGameIds: number[]): Promise<number[]> {
+  const uniqueIds = [...new Set(playerGameIds)].filter(
+    (id) => Number.isSafeInteger(id) && id > 0,
+  );
+  const queued: number[] = [];
+  for (const playerGameId of uniqueIds) {
+    if (await queueGameAnalysis(playerGameId) === "queued") {
+      queued.push(playerGameId);
+    }
+  }
+  return queued;
+}
+
+export async function hasActiveGameAnalysis(): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT id
+     FROM player_games
+     WHERE player_id = $1 AND status = 'analyzing'
+     LIMIT 1`,
+    [WEBUI_USER_ID],
+  );
+  return Boolean(result.rowCount);
 }
 
 export async function markGameAnalysisFailed(playerGameId: number, detail: string): Promise<void> {

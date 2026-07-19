@@ -1,12 +1,31 @@
 import Link from "next/link";
 import type { GameCard, GameListFilters, GamePage } from "@/domain/games";
+import type { messages } from "@/i18n/messages";
+import FavoriteButton from "@/features/games/FavoriteButton";
 
-function outcome(game: GameCard): { label: string; cls: string } {
-  if (game.result === "win") return { label: "Win", cls: "bg-emerald-100 text-emerald-700" };
+type GameText = typeof messages.en.games | typeof messages.ko.games;
+
+function outcome(game: GameCard): { label: string; icon: string; badge: string; row: string } {
+  if (game.result === "win") return {
+    label: "Win",
+    icon: "↑",
+    badge: "border border-emerald-200 bg-emerald-50/70 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/25 dark:text-emerald-400",
+    row: "border-l-2 border-l-emerald-300 hover:bg-stone-50 dark:border-l-emerald-900 dark:hover:bg-stone-800/45",
+  };
   if (["agreed", "stalemate", "repetition", "insufficient", "50move", "timevsinsufficient"].includes(game.result)) {
-    return { label: "Draw", cls: "bg-stone-200 text-stone-700" };
+    return {
+      label: "Draw",
+      icon: "=",
+      badge: "border border-stone-300 bg-stone-100 text-stone-700 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-300",
+      row: "border-l-2 border-l-stone-300 hover:bg-stone-50 dark:border-l-stone-700 dark:hover:bg-stone-800/45",
+    };
   }
-  return { label: "Loss", cls: "bg-rose-100 text-rose-700" };
+  return {
+    label: "Loss",
+    icon: "↓",
+    badge: "border border-rose-200 bg-rose-50/70 text-rose-700 dark:border-rose-900 dark:bg-rose-950/25 dark:text-rose-400",
+    row: "border-l-2 border-l-rose-300 hover:bg-stone-50 dark:border-l-rose-900 dark:hover:bg-stone-800/45",
+  };
 }
 
 function titleCase(value: string | null): string {
@@ -22,15 +41,28 @@ function gamesHref(
   if (next.query) params.set("q", next.query);
   params.set("time", next.timeClass);
   params.set("review", next.review);
+  if (next.favorite === "favorites") params.set("favorite", "favorites");
+  if (next.syncRunId !== null) params.set("sync", String(next.syncRunId));
   if (changes.page && changes.page > 1) params.set("page", String(changes.page));
   return `/games?${params.toString()}`;
 }
 
-export default function GameList({ data, filters }: { data: GamePage; filters: GameListFilters }) {
+export default function GameList({ data, filters, text }: { data: GamePage; filters: GameListFilters; text: GameText }) {
   const games = data.games;
 
   return (
     <div className="space-y-5">
+      {filters.syncRunId !== null ? (
+        <div className="flex flex-col gap-2 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-900 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-100 sm:flex-row sm:items-center sm:justify-between">
+          <span><strong>{data.total}</strong> {data.total === 1 ? "game" : "games"} added by sync #{filters.syncRunId}</span>
+          <Link
+            href={gamesHref(filters, { syncRunId: null })}
+            className="font-semibold text-brand-700 hover:underline dark:text-brand-300"
+          >
+            Show the full archive
+          </Link>
+        </div>
+      ) : null}
       <div className="space-y-3 rounded-2xl border border-stone-200 bg-white p-3 shadow-sm dark:border-stone-700 dark:bg-stone-900">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <form action="/games" method="get" className="flex flex-1 items-center gap-2 rounded-xl bg-stone-100 px-3 py-2.5 text-sm text-stone-600 dark:bg-stone-800 dark:text-stone-300">
@@ -40,11 +72,13 @@ export default function GameList({ data, filters }: { data: GamePage; filters: G
               id="game-search"
               name="q"
               defaultValue={filters.query}
-              placeholder="Search opponent or opening"
+              placeholder={text.search}
               className="w-full bg-transparent outline-none placeholder:text-stone-400"
             />
             <input type="hidden" name="time" value={filters.timeClass} />
             <input type="hidden" name="review" value={filters.review} />
+            <input type="hidden" name="favorite" value={filters.favorite} />
+            {filters.syncRunId !== null ? <input type="hidden" name="sync" value={filters.syncRunId} /> : null}
             {filters.query ? (
               <Link
                 href={gamesHref(filters, { query: "" })}
@@ -55,9 +89,24 @@ export default function GameList({ data, filters }: { data: GamePage; filters: G
               </Link>
             ) : null}
           </form>
-          <span className="shrink-0 px-1 text-xs font-medium text-stone-400">
-            {data.total} {data.total === 1 ? "game" : "games"}
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href={gamesHref(filters, {
+                favorite: filters.favorite === "favorites" ? "all" : "favorites",
+              })}
+              aria-pressed={filters.favorite === "favorites"}
+              className={`rounded-lg border px-3 py-2 text-xs font-bold transition ${
+                filters.favorite === "favorites"
+                  ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
+                  : "border-stone-200 text-stone-500 hover:border-amber-300 hover:text-amber-700 dark:border-stone-700 dark:text-stone-300"
+              }`}
+            >
+              ★ {text.favorites}
+            </Link>
+            <span className="px-1 text-xs font-medium text-stone-400">
+              {data.total} {data.total === 1 ? "game" : "games"}
+            </span>
+          </div>
         </div>
 
         <div className="flex flex-col justify-between gap-2 sm:flex-row">
@@ -87,7 +136,7 @@ export default function GameList({ data, filters }: { data: GamePage; filters: G
                     : "text-stone-500 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-100"
                 }`}
               >
-                {item}
+                {item === "waiting" ? "Needs review" : item}
               </Link>
             ))}
           </div>
@@ -100,14 +149,19 @@ export default function GameList({ data, filters }: { data: GamePage; filters: G
           const opponent = game.side === "white" ? game.black_username : game.white_username;
           const opponentRating = game.side === "white" ? game.black_rating : game.white_rating;
           return (
-            <Link
+            <article
               key={game.id}
-              href={`/games/${game.id}`}
-              className="group grid gap-4 border-b border-stone-100 px-4 py-4 transition last:border-b-0 hover:bg-emerald-50/50 dark:border-stone-800 dark:hover:bg-emerald-950/20 sm:grid-cols-[1fr_auto_auto] sm:items-center sm:px-6"
+              className={`group relative border-b border-stone-100 transition last:border-b-0 dark:border-stone-800 ${result.row}`}
             >
+              <Link
+                href={`/games/${game.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="grid gap-4 px-4 py-4 pr-16 sm:grid-cols-[1fr_auto_auto] sm:items-center sm:px-6 sm:pr-20"
+              >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${result.cls}`}>{result.label}</span>
+                  <span className={`inline-flex min-w-16 items-center justify-center gap-1 rounded-md px-2 py-0.5 text-xs font-black ${result.badge}`}><span aria-hidden>{result.icon}</span>{result.label}</span>
                   <h2 className="truncate font-semibold text-stone-900 dark:text-stone-50">vs {opponent}</h2>
                   {opponentRating ? <span className="text-sm text-stone-400">{opponentRating}</span> : null}
                 </div>
@@ -120,21 +174,29 @@ export default function GameList({ data, filters }: { data: GamePage; filters: G
                 <span>{game.played_at ?? "Unknown date"}</span>
               </div>
               <div className="flex items-center justify-between gap-3 sm:justify-end">
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${game.analyzed ? "bg-emerald-100 text-emerald-700" : game.status === "analyzing" ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${game.analyzed ? "bg-brand-100 text-brand-700" : game.status === "analyzing" ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>
                   <i className="h-1.5 w-1.5 rounded-full bg-current" />
-                  {game.analyzed ? "Review ready" : game.status === "analyzing" ? "Analyzing" : "Needs review"}
+                  {game.analyzed ? "Review ready" : game.status === "analyzing" ? "Analyzing" : "Analyze →"}
                 </span>
-                <span className="text-lg text-stone-300 transition group-hover:translate-x-1 group-hover:text-emerald-600">→</span>
+                {game.analyzed || game.status === "analyzing" ? <span className="text-lg text-stone-300 transition group-hover:translate-x-1 group-hover:text-brand-600">→</span> : null}
               </div>
-            </Link>
+              </Link>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 sm:right-5">
+                <FavoriteButton gameId={game.id} initialFavorite={game.is_favorite} />
+              </div>
+            </article>
           );
         }) : (
           <div className="px-6 py-16 text-center text-sm text-stone-500">
-            No {filters.timeClass === "all" ? "" : `${filters.timeClass} `}games match this view.
+            {filters.syncRunId !== null
+              ? "No games from this sync match the selected filters."
+              : filters.favorite === "favorites"
+              ? "No favorite games match this view."
+              : `No ${filters.timeClass === "all" ? "" : `${filters.timeClass} `}games match this view.`}
             {filters.timeClass !== "all" ? (
               <Link
                 href={gamesHref(filters, { timeClass: "all" })}
-                className="ml-1 font-semibold text-emerald-700 hover:underline"
+                className="ml-1 font-semibold text-brand-700 hover:underline"
               >
                 Show all games
               </Link>
@@ -146,11 +208,11 @@ export default function GameList({ data, filters }: { data: GamePage; filters: G
       {data.totalPages > 1 ? (
         <nav className="flex items-center justify-between gap-4 text-sm" aria-label="Game archive pages">
           {data.page > 1 ? (
-            <Link href={gamesHref(filters, { page: data.page - 1 })} className="rounded-xl border border-stone-200 bg-white px-4 py-2 font-semibold text-stone-700 hover:border-emerald-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200">← Previous</Link>
+            <Link href={gamesHref(filters, { page: data.page - 1 })} className="rounded-xl border border-stone-200 bg-white px-4 py-2 font-semibold text-stone-700 hover:border-brand-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200">← {text.previous}</Link>
           ) : <span />}
-          <span className="text-xs font-medium text-stone-500">Page {data.page} of {data.totalPages}</span>
+          <span className="text-xs font-medium text-stone-500">{text.page} {data.page} {text.of} {data.totalPages}</span>
           {data.page < data.totalPages ? (
-            <Link href={gamesHref(filters, { page: data.page + 1 })} className="rounded-xl border border-stone-200 bg-white px-4 py-2 font-semibold text-stone-700 hover:border-emerald-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200">Next →</Link>
+            <Link href={gamesHref(filters, { page: data.page + 1 })} className="rounded-xl border border-stone-200 bg-white px-4 py-2 font-semibold text-stone-700 hover:border-brand-400 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200">{text.next} →</Link>
           ) : <span />}
         </nav>
       ) : null}

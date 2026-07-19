@@ -32,12 +32,23 @@ export type ClockInsight = {
   averageLossWithTime: number | null;
 };
 
+export type BrilliantInsight = {
+  gameId: number;
+  playedAt: string | null;
+  moveNumber: number;
+  side: "white" | "black";
+  san: string;
+  opening: string;
+};
+
 export type PlayerInsights = {
   reviewedGames: number;
   totalMoves: number;
   averageAccuracy: number;
   severeErrors: number;
   blunders: number;
+  brilliantMoves: number;
+  brilliancies: BrilliantInsight[];
   phase: InsightSlice[];
   timeClasses: InsightSlice[];
   openings: OpeningInsight[];

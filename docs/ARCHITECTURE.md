@@ -1,117 +1,90 @@
 # Architecture
 
-cccron is a modular monolith: one repository and one data model, with a Python
-pipeline, an optional engine HTTP service, and a Next.js UI. This is a better
-open-source default than mandatory microservices because a single user can run
-everything on one computer, while hosted deployments can move Stockfish onto a
-separate machine without changing pipeline code.
-
-## Runtime shape
+OpenFile is a local-first modular monolith. The browser UI, Python pipeline,
+SQLite database, and Stockfish process run on the same computer.
 
 ```text
-Chess.com / Lichess
-        |
-        v
-Python pipeline ---- EngineClient ---- Local Stockfish
-        |                  |
-        |                  +---------- Remote engine_server
-        v
-PostgreSQL <-------- Next.js server -------- Browser UI
+Chess.com public API               optional Lichess explorer
+          |                                  |
+          v                                  v
+   Python pipeline  <---- shared SQLite ---- Next.js server ---- browser
+          |
+          v
+   local Stockfish UCI
 ```
 
-The important rule is dependency direction: chess features depend on engine
-and storage interfaces; adapters contain operating-system, HTTP, and SQL
-details. Browser components never import a database module.
+This shape keeps installation understandable on macOS and Windows, avoids
+accounts and cloud infrastructure, and gives contributors explicit boundaries.
 
-## Repository layout
+## Active layout
 
 ```text
-chesspipe/                 Python application
-  ingest/                  Chess.com import feature
-  analyze/                 game-analysis feature and queries
-  puzzle/                  puzzle generation and rendering
-  deliver/                 Telegram delivery
-  engine/
-    base.py                EngineClient protocol
-    factory.py             configured adapter selection
-    local.py               local UCI Stockfish adapter
-    remote.py              engine_server HTTP adapter
+chesspipe/
+  setup.py                 setup, discovery, doctor, config manager
+  automation.py            native schedules, due rules, routine lock/status
+  paths.py                 platform config/data locations
+  config.py                JSON config + environment overrides
+  stages.py                resumable ingest/analyze/generate workflow
   storage/
-    postgres.py            PostgreSQL connection adapter
-  config.py                environment-backed application settings
-  stages.py                resumable pipeline orchestration
-
-engine_server/             optional remote Stockfish service
-sql/                       PostgreSQL schema and migrations
+    schema.sql             idempotent SQLite schema
+    sqlite.py              connection, WAL, initialization
+  engine/
+    base.py                engine protocol
+    factory.py             local adapter construction
+    local.py               Stockfish UCI adapter
+  ingest/                  Chess.com client and persistence
+  analyze/                 analysis persistence
+  puzzle/                  puzzle generation and themes
 
 webui/
-  app/                     Next.js routes and route handlers only
-  components/              reusable UI primitives
-  domain/                  serializable data contracts shared with clients
-  features/                analysis, games, puzzles, and review UI
-  lib/                     browser-safe chess/review utilities
+  app/                     Next.js routes
+  components/              reusable UI
+  domain/                  browser-safe contracts
+  features/                games, review, analysis, puzzles
+  i18n/                    language catalogs
   server/
-    database/              database drivers and pool lifecycle
-    repositories/          server-side queries
+    database/              shared config reader and node:sqlite adapter
+    repositories/          SQLite queries
     runtime/               local Python worker launcher
+
+legacy/                    preserved unsupported hosted experiments
 ```
 
-## Stockfish portability
+## Configuration and privacy
 
-`EngineClient` is the application port. `build_engine()` selects either:
+The Python CLI and Next.js server resolve the same platform-specific
+`config.json` and SQLite path. Environment variables override those values for
+development. Setup validates Stockfish with the UCI handshake before saving.
 
-- `ENGINE_MODE=local`: `LocalEngine` starts `STOCKFISH_PATH` as a UCI process.
-- `ENGINE_MODE=remote`: `RemoteEngine` calls `engine_server`.
+SQLite uses WAL mode and a 30-second busy timeout so the web server can read
+while a Python analysis worker writes. Pipeline rows transition through stored
+statuses, making interrupted jobs inspectable and recoverable.
 
-`STOCKFISH_PATH=stockfish` uses the executable found in the process `PATH`.
-An absolute path is the most predictable choice for cron, containers, and the
-web worker. No Stockfish binary should be committed to this repository; users
-install an appropriate build for their OS and CPU.
+User-owned features such as `favorite_games`, `review_sidelines`, and
+`puzzle_progress` use `(user_id, resource_id)` ownership rather than global
+flags. This keeps the local single-user experience simple while preserving the
+schema boundary needed for future multi-user deployments.
 
-New engines should implement `EngineClient` and be registered in
-`engine/factory.py`. Feature code should not inspect the configured backend.
+The Lichess token is optional. Without it, the book endpoint returns
+`available: false`; review, analysis, syncing, and puzzles remain functional.
 
-## Database portability
+Automation installs only a per-user native trigger. The trigger runs a wrapper
+from the private OpenFile data directory every 30 minutes; `automation.py`
+applies the selected due rule and calls the same `stages.py` functions as the
+CLI. The web server is not part of scheduled execution. Run state and a local
+lock make the behavior observable and prevent overlapping scheduled routines.
 
-PostgreSQL is the only supported database today. This is explicit because the
-current schema uses `jsonb`, schemas, timezone expressions, and
-`FOR UPDATE SKIP LOCKED`. Merely accepting `DATABASE_ENGINE=sqlite` would not
-make those semantics portable.
+## Contributor rules
 
-The recommended open-source progression is:
+- Browser features must not read files or SQLite directly.
+- Server repositories own SQL and return domain contracts.
+- Chess features depend on the engine protocol, not subprocess details.
+- Schema changes must remain idempotent for existing local databases.
+- New user-facing strings belong in `webui/i18n/messages.ts`.
+- Personal databases, tokens, paths, and generated analysis never belong in Git.
 
-1. Keep PostgreSQL for hosted/multi-user deployments and concurrent workers.
-2. Add SQLite as a separate local/single-user adapter.
-3. Move feature queries behind repository interfaces and keep migrations per
-   dialect (or adopt SQLAlchemy Core/Alembic for common schema operations).
-4. Implement job claiming separately: PostgreSQL uses row locking; SQLite uses
-   a short `BEGIN IMMEDIATE` transaction and a conditional status update.
-5. Run the same repository contract tests against both adapters.
+## Future adapters
 
-MySQL is not a useful first target: it adds another server dependency while
-doing less for the local-user installation story than SQLite.
-
-The Next.js repositories are already isolated under `webui/server/`. A future
-backend should be selected once during server startup and exposed through the
-same repository contract; React components should remain unchanged.
-
-## Boundaries to preserve
-
-- `domain/` contains data shapes, not SQL or React hooks.
-- `features/` may import domain types and shared components, not server code.
-- API routes and server pages may import repositories and runtime adapters.
-- Pipeline stages coordinate work; feature repositories own their SQL.
-- Secrets and machine-specific paths stay in `.env` files.
-- Long analysis work stays resumable and idempotent through persisted status.
-
-## Sensible next refactors
-
-The present structure is clean enough to accept contributors. The next high
-value changes are smaller extractions, not a rewrite:
-
-- split `GameReview.tsx` into review board, notation, coach card, and sideline
-  hooks;
-- split `stages.py` into one application service per pipeline stage;
-- add repository contract tests before implementing SQLite;
-- replace the fixed `WEBUI_USER_ID` boundary with an authenticated user
-  context when multi-user hosting begins.
+SQLite and local Stockfish are the supported experience. A hosted database or
+remote engine can return later only as an optional adapter with contract tests;
+feature code and browser components should not branch on the backend.

@@ -5,10 +5,11 @@ import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatEvaluation } from "@/lib/review";
 import EvaluationBar from "@/components/chess/EvaluationBar";
+import { lichessAnalysisUrl } from "@/lib/lichess";
 
 const Board = dynamic(() => import("@/components/chess/Board"), {
   ssr: false,
-  loading: () => <div className="aspect-square w-full animate-pulse rounded-xl bg-stone-200 dark:bg-stone-800" />,
+  loading: () => <div className="aspect-square w-full animate-pulse bg-stone-200 dark:bg-stone-800" />,
 });
 
 const START_FEN = new Chess().fen();
@@ -42,6 +43,88 @@ type AnalysisResult = {
   lines: EngineLine[];
 };
 
+type PositionNode = AnalysisPositionFrame & {
+  id: string;
+  parentId: string | null;
+  childIds: string[];
+};
+
+function nodesFromFrames(frames: AnalysisPositionFrame[]): PositionNode[] {
+  return frames.map((frame, index) => ({
+    ...frame,
+    id: `initial-${index}`,
+    parentId: index ? `initial-${index - 1}` : null,
+    childIds: index + 1 < frames.length ? [`initial-${index + 1}`] : [],
+  }));
+}
+
+function pathToNode(nodes: PositionNode[], nodeId: string): PositionNode[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const path: PositionNode[] = [];
+  let node = byId.get(nodeId);
+  while (node) {
+    path.unshift(node);
+    node = node.parentId ? byId.get(node.parentId) : undefined;
+  }
+  return path;
+}
+
+function mainlineLeaf(nodes: PositionNode[], startId: string): string {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  let node = byId.get(startId);
+  while (node?.childIds[0]) node = byId.get(node.childIds[0]);
+  return node?.id ?? startId;
+}
+
+function PlayedVariationTree({
+  nodes,
+  cursorId,
+  onSelect,
+}: {
+  nodes: PositionNode[];
+  cursorId: string;
+  onSelect: (id: string) => void;
+}) {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const root = nodes.find((node) => node.parentId === null);
+  if (!root?.childIds.length) {
+    return <p className="px-3 py-4 text-center text-xs text-stone-400">Play a move to start a variation.</p>;
+  }
+
+  function sequence(startId: string, depth: number): React.ReactNode {
+    const line: PositionNode[] = [];
+    let node = byId.get(startId);
+    while (node) {
+      line.push(node);
+      if (node.childIds.length !== 1) break;
+      node = byId.get(node.childIds[0]);
+    }
+    const tail = line.at(-1);
+    return (
+      <div key={startId} className={depth ? "ml-3 border-l border-stone-200 pl-2 dark:border-stone-700" : ""}>
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-1 py-1">
+          {line.map((move) => (
+            <button
+              key={move.id}
+              type="button"
+              data-current={move.id === cursorId ? "true" : undefined}
+              onClick={() => onSelect(move.id)}
+              className={`rounded px-1.5 py-0.5 text-xs font-semibold transition ${move.id === cursorId ? "bg-brand-700 text-white" : "text-stone-700 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"}`}
+            >
+              {move.label}
+            </button>
+          ))}
+        </div>
+        {tail && tail.childIds.length > 1 ? (
+          <div>{tail.childIds.map((childId) => sequence(childId, depth + 1))}</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return <div className="p-2">{root.childIds.map((childId) => sequence(childId, root.childIds.length > 1 ? 1 : 0))}</div>;
+}
+
 function moveLabel(chess: Chess, san: string): string {
   const fullMove = Number(chess.fen().split(" ")[5] ?? "1");
   return chess.turn() === "b" ? `${fullMove}... ${san}` : `${fullMove}. ${san}`;
@@ -52,6 +135,17 @@ function lineEvaluation(line: EngineLine): string {
     return line.whiteMate > 0 ? `M${Math.abs(line.whiteMate)}` : `-M${Math.abs(line.whiteMate)}`;
   }
   return formatEvaluation(line.whiteCp);
+}
+
+function compactPv(line: EngineLine): string {
+  const first = line.pvSan[0] ?? "";
+  const startsWithBest = Boolean(
+    line.bestMoveSan
+    && (first === line.bestMoveSan || first.endsWith(` ${line.bestMoveSan}`)),
+  );
+  const continuation = line.pvSan.slice(startsWithBest ? 1 : 0);
+  const visible = continuation.slice(0, 8).join(" ");
+  return continuation.length > 8 ? `${visible} …` : visible;
 }
 
 function positionFramesFromPgn(pgn: string): AnalysisPositionFrame[] {
@@ -85,15 +179,16 @@ export default function AnalysisWorkbench({
   initialFrames?: AnalysisPositionFrame[];
   initialCursor?: number;
 }) {
-  const startingFrames = initialFrames?.length
+  const startingFrames = useMemo(() => initialFrames?.length
     ? initialFrames
-    : [{ fen: START_FEN, uci: null, san: null, label: "Start" }];
+    : [{ fen: START_FEN, uci: null, san: null, label: "Start" }], [initialFrames]);
   const startingCursor = Math.max(
     0,
     Math.min(startingFrames.length - 1, initialCursor),
   );
-  const [frames, setFrames] = useState<AnalysisPositionFrame[]>(startingFrames);
-  const [cursor, setCursor] = useState(startingCursor);
+  const startingNodes = useMemo(() => nodesFromFrames(startingFrames), [startingFrames]);
+  const [nodes, setNodes] = useState<PositionNode[]>(startingNodes);
+  const [cursorId, setCursorId] = useState(startingNodes[startingCursor].id);
   const [orientation, setOrientation] = useState<"white" | "black">("white");
   const [depth, setDepth] = useState(14);
   const [multipv, setMultipv] = useState(3);
@@ -109,17 +204,30 @@ export default function AnalysisWorkbench({
   const requestId = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const notationRef = useRef<HTMLDivElement>(null);
+  const nextNodeId = useRef(startingNodes.length);
 
-  const current = frames[cursor];
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const current = nodeById.get(cursorId) ?? nodes[0];
+  const frames = useMemo(() => pathToNode(nodes, current.id), [current.id, nodes]);
+  const cursor = frames.length - 1;
   const currentFen = current.fen;
   const sideToMove = currentFen.split(" ")[1] === "b" ? "black" : "white";
   const topLine = result?.lines[0];
   const evaluation = topLine?.whiteCp ?? 0;
+  const lichessHref = lichessAnalysisUrl(currentFen, orientation);
   const arrows = topLine?.bestMoveUci ? [{
     startSquare: topLine.bestMoveUci.slice(0, 2),
     endSquare: topLine.bestMoveUci.slice(2, 4),
     color: "#65a30d",
   }] : [];
+
+  const navigateToNode = useCallback((id: string) => {
+    const target = nodeById.get(id);
+    if (!target) return;
+    setCursorId(target.id);
+    setFenInput(target.fen);
+    setResult(null);
+  }, [nodeById]);
 
   const analyzePosition = useCallback(async () => {
     const id = ++requestId.current;
@@ -176,7 +284,7 @@ export default function AnalysisWorkbench({
         currentRect.height / 2,
       behavior: "smooth",
     });
-  }, [cursor]);
+  }, [cursorId]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -184,21 +292,15 @@ export default function AnalysisWorkbench({
       if (target?.matches("input, textarea, select")) return;
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        const targetIndex = Math.max(0, cursor - 1);
-        setCursor(targetIndex);
-        setFenInput(frames[targetIndex].fen);
-        setResult(null);
+        if (current.parentId) navigateToNode(current.parentId);
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
-        const targetIndex = Math.min(frames.length - 1, cursor + 1);
-        setCursor(targetIndex);
-        setFenInput(frames[targetIndex].fen);
-        setResult(null);
+        if (current.childIds[0]) navigateToNode(current.childIds[0]);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cursor, frames]);
+  }, [current, navigateToNode]);
 
   function playMove(uci: string) {
     const chess = new Chess(currentFen);
@@ -219,9 +321,30 @@ export default function AnalysisWorkbench({
         san: move.san,
         label: beforeLabel,
       };
-      const nextFrames = [...frames.slice(0, cursor + 1), nextFrame];
-      setFrames(nextFrames);
-      setCursor(nextFrames.length - 1);
+      const existing = current.childIds
+        .map((id) => nodeById.get(id))
+        .find((node) => node?.uci === nextFrame.uci);
+      if (existing) {
+        setCursorId(existing.id);
+        setFenInput(existing.fen);
+        setResult(null);
+        setError(null);
+        return;
+      }
+      const id = `variation-${nextNodeId.current++}`;
+      const nextNode: PositionNode = {
+        ...nextFrame,
+        id,
+        parentId: current.id,
+        childIds: [],
+      };
+      setNodes((tree) => [
+        ...tree.map((node) => node.id === current.id
+          ? { ...node, childIds: [...node.childIds, id] }
+          : node),
+        nextNode,
+      ]);
+      setCursorId(id);
       setFenInput(nextFrame.fen);
       setResult(null);
       setError(null);
@@ -233,8 +356,10 @@ export default function AnalysisWorkbench({
   function loadFen() {
     try {
       const chess = new Chess(fenInput.trim());
-      setFrames([{ fen: chess.fen(), uci: null, san: null, label: "Loaded position" }]);
-      setCursor(0);
+      const loaded = nodesFromFrames([{ fen: chess.fen(), uci: null, san: null, label: "Loaded position" }]);
+      setNodes(loaded);
+      setCursorId(loaded[0].id);
+      nextNodeId.current = loaded.length;
       setResult(null);
       setLoadError(null);
     } catch {
@@ -245,8 +370,10 @@ export default function AnalysisWorkbench({
   function loadPgn() {
     try {
       const loaded = positionFramesFromPgn(pgnInput.trim());
-      setFrames(loaded);
-      setCursor(loaded.length - 1);
+      const loadedNodes = nodesFromFrames(loaded);
+      setNodes(loadedNodes);
+      setCursorId(loadedNodes.at(-1)?.id ?? loadedNodes[0].id);
+      nextNodeId.current = loadedNodes.length;
       setFenInput(loaded.at(-1)?.fen ?? START_FEN);
       setResult(null);
       setLoadError(null);
@@ -256,45 +383,31 @@ export default function AnalysisWorkbench({
   }
 
   function resetBoard() {
-    setFrames(startingFrames);
-    setCursor(startingCursor);
+    setNodes(startingNodes);
+    setCursorId(startingNodes[startingCursor].id);
+    nextNodeId.current = startingNodes.length;
     setFenInput(startingFrames[startingCursor].fen);
     setResult(null);
     setLoadError(null);
   }
 
-  const moveRows = useMemo(
-    () => Array.from({ length: Math.ceil((frames.length - 1) / 2) }, (_, index) => ({
-      white: frames[index * 2 + 1],
-      black: frames[index * 2 + 2],
-      number: index + 1,
-    })),
-    [frames],
-  );
-
-  function navigateToPosition(index: number) {
-    const target = Math.max(0, Math.min(frames.length - 1, index));
-    setCursor(target);
-    setFenInput(frames[target].fen);
-    setResult(null);
-  }
-
   return (
-    <div className="grid items-start gap-5 xl:grid-cols-[minmax(520px,0.98fr)_minmax(430px,1.02fr)]">
+    <div className="grid items-start gap-5 xl:grid-cols-[minmax(640px,1.35fr)_minmax(400px,0.65fr)] 2xl:grid-cols-[minmax(760px,1.45fr)_minmax(430px,0.55fr)]">
       <section className="xl:sticky xl:top-20">
-        <div className="mx-auto w-full max-w-[720px] xl:w-[calc(100vh-12.5rem)] xl:max-w-full">
+        <div className="mx-auto w-full max-w-[920px] xl:w-[min(calc(100dvh-10.5rem),100%)] xl:max-w-full">
           <div className="mb-2 flex items-center justify-between rounded-xl border border-stone-200 bg-white px-3 py-2.5 shadow-sm dark:border-stone-700 dark:bg-stone-900">
-            <div><p className="text-sm font-black text-stone-900 dark:text-stone-50">{sideToMove === "white" ? "White" : "Black"} to move</p><p className="text-[11px] text-stone-400">Move {cursor} of {frames.length - 1}</p></div>
+            <div><p className="text-sm font-black text-stone-900 dark:text-stone-50">{sideToMove === "white" ? "White" : "Black"} to move</p><p className="text-[11px] text-stone-400">Ply {cursor} · {nodes.length - 1} moves in tree</p></div>
             <div className="flex gap-1.5">
-              <button type="button" onClick={() => { setOrientation((value) => value === "white" ? "black" : "white"); }} className="rounded-lg border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-600 hover:border-emerald-400 dark:border-stone-700 dark:text-stone-300" title="Flip board">↻ Flip</button>
+              <a href={lichessHref} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-600 hover:border-brand-400 hover:text-brand-700 dark:border-stone-700 dark:text-stone-300" title="Open this exact position in Lichess">Lichess ↗</a>
+              <button type="button" onClick={() => { setOrientation((value) => value === "white" ? "black" : "white"); }} className="rounded-lg border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-600 hover:border-brand-400 dark:border-stone-700 dark:text-stone-300" title="Flip board">↻ Flip</button>
               <button type="button" onClick={resetBoard} className="rounded-lg border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-600 hover:border-rose-400 dark:border-stone-700 dark:text-stone-300">Reset</button>
             </div>
           </div>
           <div className="grid grid-cols-[34px_minmax(0,1fr)] items-stretch gap-2">
             <EvaluationBar cp={evaluation} />
-            <div className="overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-stone-300 dark:bg-stone-900 dark:ring-stone-700">
+            <div className="overflow-hidden bg-white shadow-lg ring-1 ring-stone-300 dark:bg-stone-900 dark:ring-stone-700">
               <Board
-                key={`analysis-${cursor}-${orientation}`}
+                key={`analysis-${cursorId}-${orientation}`}
                 fen={currentFen}
                 orientation={orientation}
                 highlight={current.uci ? [current.uci.slice(0, 2), current.uci.slice(2, 4)] : []}
@@ -305,61 +418,72 @@ export default function AnalysisWorkbench({
             </div>
           </div>
           <div className="mt-2 grid grid-cols-4 gap-2">
-            {[{ label: "|←", title: "Starting position", target: 0, disabled: cursor === 0 }, { label: "←", title: "Previous move", target: cursor - 1, disabled: cursor === 0 }, { label: "→", title: "Next move", target: cursor + 1, disabled: cursor === frames.length - 1 }, { label: "→|", title: "Latest position", target: frames.length - 1, disabled: cursor === frames.length - 1 }].map((control) => (
-              <button key={control.title} type="button" onClick={() => navigateToPosition(control.target)} disabled={control.disabled} title={control.title} aria-label={control.title} className="rounded-xl border border-stone-200 bg-white py-2 text-sm font-black text-stone-600 shadow-sm disabled:opacity-35 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300">{control.label}</button>
+            {[
+              { label: "|←", title: "Starting position", target: nodes[0].id, disabled: current.parentId === null },
+              { label: "←", title: "Previous move", target: current.parentId ?? current.id, disabled: current.parentId === null },
+              { label: "→", title: "Next move", target: current.childIds[0] ?? current.id, disabled: !current.childIds.length },
+              { label: "→|", title: "End of this variation", target: mainlineLeaf(nodes, current.id), disabled: !current.childIds.length },
+            ].map((control) => (
+              <button key={control.title} type="button" onClick={() => navigateToNode(control.target)} disabled={control.disabled} title={control.title} aria-label={control.title} className="rounded-xl border border-stone-200 bg-white py-2 text-sm font-black text-stone-600 shadow-sm disabled:opacity-35 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300">{control.label}</button>
             ))}
           </div>
+          <p className="mt-2 text-center text-[11px] text-stone-400">Right-click marks a square · right-drag draws or removes an arrow.</p>
         </div>
       </section>
 
-      <aside className="flex min-h-[720px] flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 xl:h-[calc(100vh-8.5rem)] xl:min-h-0">
-        <div className="shrink-0 border-b border-stone-100 p-5 dark:border-stone-800">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+      <aside className="flex min-h-[720px] flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 xl:h-[calc(100dvh-9rem)] xl:min-h-0">
+        <div className="shrink-0 border-b border-stone-100 p-3 dark:border-stone-800">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">{result?.engine ?? "Local Stockfish"}</p>
-              <div className="mt-1 flex items-baseline gap-2"><h2 className="text-3xl font-black text-stone-900 dark:text-stone-50">{topLine ? lineEvaluation(topLine) : "—"}</h2><span className="text-xs text-stone-400">White evaluation</span></div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand-700 dark:text-brand-400">{result?.engine ?? "Local Stockfish"}</p>
+              <div className="flex items-baseline gap-2"><h2 className="text-2xl font-black text-stone-900 dark:text-stone-50">{topLine ? lineEvaluation(topLine) : "—"}</h2><span className="text-[11px] text-stone-400">White</span></div>
             </div>
-            <button type="button" onClick={() => void analyzePosition()} disabled={busy} className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-800 disabled:opacity-60">{busy ? "Analyzing…" : "Analyze now"}</button>
+            <button type="button" onClick={() => void analyzePosition()} disabled={busy} className="rounded-lg bg-brand-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-800 disabled:opacity-60">{busy ? "Analyzing…" : "Analyze"}</button>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <label className="text-[11px] font-semibold text-stone-500">Depth<select value={depth} onChange={(event) => setDepth(Number(event.target.value))} className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{[10, 12, 14, 16, 18, 20, 22].map((value) => <option key={value}>{value}</option>)}</select></label>
-            <label className="text-[11px] font-semibold text-stone-500">Lines<select value={multipv} onChange={(event) => setMultipv(Number(event.target.value))} className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{[1, 2, 3, 5].map((value) => <option key={value}>{value}</option>)}</select></label>
-            <label className="text-[11px] font-semibold text-stone-500">Time<select value={timeSec} onChange={(event) => setTimeSec(Number(event.target.value))} className="mt-1 block w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{[[0.5, "0.5s"], [1, "1s"], [1.5, "1.5s"], [3, "3s"], [5, "5s"], [10, "10s"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <label className="flex items-end"><button type="button" onClick={() => setAutoAnalyze((value) => !value)} aria-pressed={autoAnalyze} className={`w-full rounded-lg border px-2 py-1.5 text-xs font-bold ${autoAnalyze ? "border-emerald-600 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "border-stone-200 text-stone-500 dark:border-stone-700"}`}>{autoAnalyze ? "● Auto" : "○ Manual"}</button></label>
+          <div className="mt-2 grid grid-cols-4 gap-1.5">
+            <label className="text-[10px] font-semibold text-stone-500">Depth<select value={depth} onChange={(event) => setDepth(Number(event.target.value))} className="mt-0.5 block w-full rounded-md border border-stone-200 bg-white px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{[10, 12, 14, 16, 18, 20, 22].map((value) => <option key={value}>{value}</option>)}</select></label>
+            <label className="text-[10px] font-semibold text-stone-500">Branches<select value={multipv} onChange={(event) => setMultipv(Number(event.target.value))} className="mt-0.5 block w-full rounded-md border border-stone-200 bg-white px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{[1, 2, 3, 5].map((value) => <option key={value}>{value}</option>)}</select></label>
+            <label className="text-[10px] font-semibold text-stone-500">Time<select value={timeSec} onChange={(event) => setTimeSec(Number(event.target.value))} className="mt-0.5 block w-full rounded-md border border-stone-200 bg-white px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{[[0.5, "0.5s"], [1, "1s"], [1.5, "1.5s"], [3, "3s"], [5, "5s"], [10, "10s"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label className="flex items-end"><button type="button" onClick={() => setAutoAnalyze((value) => !value)} aria-pressed={autoAnalyze} className={`w-full rounded-md border px-1.5 py-1 text-[11px] font-bold ${autoAnalyze ? "border-brand-600 bg-brand-50 text-brand-700 dark:bg-brand-950 dark:text-brand-300" : "border-stone-200 text-stone-500 dark:border-stone-700"}`}>{autoAnalyze ? "● Auto" : "○ Manual"}</button></label>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"><strong className="block">Stockfish could not analyze this position</strong><span className="mt-1 block text-xs opacity-80">{error}</span></div> : null}
-          {!result && !error ? <div className="rounded-2xl border border-dashed border-stone-200 p-6 text-center dark:border-stone-700"><div className={`mx-auto grid h-10 w-10 place-items-center rounded-xl bg-emerald-50 text-xl text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 ${busy ? "animate-pulse" : ""}`}>♞</div><p className="mt-3 text-sm font-bold text-stone-800 dark:text-stone-100">{busy ? "Stockfish is calculating" : "Ready to analyze"}</p><p className="mt-1 text-xs leading-5 text-stone-500">Play a move or load a position. New searches replace older ones.</p></div> : null}
-          {result ? (
-            <div className="space-y-2">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          {error ? <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"><strong>Analysis failed:</strong> {error}</div> : null}
+
+          <section className="overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
+            <div className="flex items-center justify-between border-b border-stone-100 px-3 py-2 dark:border-stone-800"><h3 className="text-xs font-black text-stone-900 dark:text-stone-50">Engine branches</h3><span className="text-[10px] text-stone-400">click first move to play</span></div>
+            {result ? (
+              <div className="divide-y divide-stone-100 dark:divide-stone-800" role="tree">
               {result.lines.map((line) => (
-                <article key={line.rank} className="rounded-2xl border border-stone-200 p-3 dark:border-stone-700">
-                  <div className="flex items-center gap-3">
-                    <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg text-xs font-black ${line.rank === 1 ? "bg-emerald-700 text-white" : "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300"}`}>{line.rank}</span>
-                    <button type="button" disabled={!line.bestMoveUci} onClick={() => { if (line.bestMoveUci) playMove(line.bestMoveUci); }} className="min-w-16 text-left text-lg font-black text-stone-900 hover:text-emerald-700 disabled:opacity-50 dark:text-stone-50 dark:hover:text-emerald-400">{line.bestMoveSan ?? "—"}</button>
-                    <span className="ml-auto rounded-lg bg-stone-100 px-2 py-1 font-mono text-xs font-bold text-stone-700 dark:bg-stone-800 dark:text-stone-200">{lineEvaluation(line)}</span>
+                <div key={line.rank} role="treeitem" aria-selected={line.rank === 1} className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-2 px-3 py-2 text-xs">
+                  <span className="font-mono font-bold text-stone-500">{lineEvaluation(line)}</span>
+                  <div className="min-w-0 border-l border-stone-200 pl-2 dark:border-stone-700">
+                    <button type="button" disabled={!line.bestMoveUci} onClick={() => { if (line.bestMoveUci) playMove(line.bestMoveUci); }} className="mr-1 font-black text-stone-900 hover:text-brand-700 disabled:opacity-50 dark:text-stone-50 dark:hover:text-brand-400">{line.bestMoveSan ?? "—"}</button>
+                    <span className="leading-5 text-stone-500">{compactPv(line)}</span>
                   </div>
-                  <p className="mt-2 break-words font-mono text-xs leading-5 text-stone-500">{line.pvSan.join(" ")}</p>
-                </article>
+                </div>
               ))}
-            </div>
-          ) : null}
+              </div>
+            ) : <p className={`px-3 py-3 text-xs text-stone-400 ${busy ? "animate-pulse" : ""}`}>{busy ? "Stockfish is calculating…" : "Play a move or choose Analyze."}</p>}
+          </section>
 
-          <section className="mt-4 rounded-2xl border border-stone-200 dark:border-stone-700">
-            <div className="flex items-center justify-between border-b border-stone-100 px-3 py-2 dark:border-stone-800"><h3 className="text-sm font-black text-stone-900 dark:text-stone-50">Move notation</h3><span className="text-xs text-stone-400">← → keys</span></div>
-            <div ref={notationRef} className="max-h-36 overflow-y-auto p-2">
-              {moveRows.length ? <div className="grid grid-cols-[32px_1fr_1fr] gap-1 text-sm">{moveRows.map((row) => <div key={row.number} className="col-span-3 grid grid-cols-[32px_1fr_1fr] gap-1"><span className="px-1 py-1.5 text-right font-mono text-xs text-stone-400">{row.number}.</span>{[row.white, row.black].map((frame, index) => frame ? <button key={frame.label} type="button" data-current={frames[cursor] === frame ? "true" : undefined} onClick={() => navigateToPosition(frames.indexOf(frame))} className={`rounded-lg px-2 py-1.5 text-left font-semibold ${frames[cursor] === frame ? "bg-stone-900 text-white dark:bg-stone-100 dark:text-stone-950" : "hover:bg-stone-100 dark:hover:bg-stone-800"}`}>{frame.san}</button> : <span key={index} />)}</div>)}</div> : <p className="p-3 text-center text-xs text-stone-400">Play a move to begin a line.</p>}
+          <section className="mt-3 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
+            <div className="flex items-center justify-between border-b border-stone-100 px-3 py-2 dark:border-stone-800"><h3 className="text-xs font-black text-stone-900 dark:text-stone-50">Move tree</h3><span className="text-[10px] text-stone-400">← → navigate</span></div>
+            <div ref={notationRef} className="max-h-64 overflow-y-auto">
+              <PlayedVariationTree nodes={nodes} cursorId={cursorId} onSelect={navigateToNode} />
             </div>
           </section>
 
-          <section className="mt-4 rounded-2xl border border-stone-200 p-3 dark:border-stone-700">
-            <div className="mb-3 flex gap-1 rounded-lg bg-stone-100 p-1 dark:bg-stone-800">{(["fen", "pgn"] as const).map((mode) => <button key={mode} type="button" onClick={() => { setInputMode(mode); setLoadError(null); }} className={`flex-1 rounded-md px-2 py-1.5 text-xs font-bold uppercase ${inputMode === mode ? "bg-white text-stone-900 shadow-sm dark:bg-stone-700 dark:text-white" : "text-stone-500"}`}>{mode}</button>)}</div>
-            {inputMode === "fen" ? <textarea value={fenInput} onChange={(event) => setFenInput(event.target.value)} rows={3} spellCheck={false} className="w-full resize-none rounded-xl border border-stone-200 bg-stone-50 p-3 font-mono text-xs text-stone-700 outline-none focus:border-emerald-500 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-300" aria-label="FEN position" /> : <textarea value={pgnInput} onChange={(event) => setPgnInput(event.target.value)} rows={5} spellCheck={false} placeholder="Paste a PGN game here…" className="w-full resize-none rounded-xl border border-stone-200 bg-stone-50 p-3 font-mono text-xs text-stone-700 outline-none focus:border-emerald-500 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-300" aria-label="PGN game" />}
-            {loadError ? <p className="mt-2 text-xs font-semibold text-rose-600 dark:text-rose-400">{loadError}</p> : null}
-            <button type="button" onClick={inputMode === "fen" ? loadFen : loadPgn} className="mt-2 w-full rounded-xl border border-stone-200 py-2 text-xs font-bold text-stone-600 hover:border-emerald-400 hover:text-emerald-700 dark:border-stone-700 dark:text-stone-300">Load {inputMode.toUpperCase()}</button>
-          </section>
+          <details className="mt-3 rounded-xl border border-stone-200 dark:border-stone-700">
+            <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-stone-500">Load FEN or PGN</summary>
+            <div className="border-t border-stone-100 p-3 dark:border-stone-800">
+              <div className="mb-3 flex gap-1 rounded-lg bg-stone-100 p-1 dark:bg-stone-800">{(["fen", "pgn"] as const).map((mode) => <button key={mode} type="button" onClick={() => { setInputMode(mode); setLoadError(null); }} className={`flex-1 rounded-md px-2 py-1 text-[11px] font-bold uppercase ${inputMode === mode ? "bg-white text-stone-900 shadow-sm dark:bg-stone-700 dark:text-white" : "text-stone-500"}`}>{mode}</button>)}</div>
+              {inputMode === "fen" ? <textarea value={fenInput} onChange={(event) => setFenInput(event.target.value)} rows={3} spellCheck={false} className="w-full resize-none rounded-lg border border-stone-200 bg-stone-50 p-2 font-mono text-xs text-stone-700 outline-none focus:border-brand-500 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-300" aria-label="FEN position" /> : <textarea value={pgnInput} onChange={(event) => setPgnInput(event.target.value)} rows={5} spellCheck={false} placeholder="Paste a PGN game here…" className="w-full resize-none rounded-lg border border-stone-200 bg-stone-50 p-2 font-mono text-xs text-stone-700 outline-none focus:border-brand-500 dark:border-stone-700 dark:bg-stone-950 dark:text-stone-300" aria-label="PGN game" />}
+              {loadError ? <p className="mt-2 text-xs font-semibold text-rose-600 dark:text-rose-400">{loadError}</p> : null}
+              <button type="button" onClick={inputMode === "fen" ? loadFen : loadPgn} className="mt-2 w-full rounded-lg border border-stone-200 py-1.5 text-xs font-bold text-stone-600 hover:border-brand-400 hover:text-brand-700 dark:border-stone-700 dark:text-stone-300">Load {inputMode.toUpperCase()}</button>
+            </div>
+          </details>
         </div>
       </aside>
     </div>

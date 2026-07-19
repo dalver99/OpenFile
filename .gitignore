@@ -1,10 +1,22 @@
 # Secrets / local config
 .env
 **/.env
-engine_server/token.txt
+**/token.txt
+.vscode/
+.rookline/
+.openfile/
+/automation/
+rookline.config.json
+openfile.config.json
+*.local.json
 
 # Data & virtualenvs
 data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 venv/
 .venv/
 **/.venv/

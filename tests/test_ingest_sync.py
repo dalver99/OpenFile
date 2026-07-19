@@ -23,7 +23,7 @@ class FakeCursor:
         return None
 
     def execute(self, _query: str, params) -> None:
-        self.urls = list(params[1])
+        self.urls = list(params[1:])
 
     def fetchall(self):
         return [(url,) for url in self.urls if url in self.known_urls]
@@ -41,7 +41,9 @@ class FakeClient:
     def __init__(self, games: list[ChessComGame]) -> None:
         self.games = games
 
-    def recent_games(self, _username: str, _archive_months: int):
+    def recent_games(self, _username: str, _archive_months: int, progress=None):
+        if progress:
+            progress("fetching", {"archives_total": 1, "archives_done": 1})
         return self.games
 
 
@@ -84,13 +86,25 @@ def run_sync(refresh_existing: bool) -> tuple[repository.SyncSummary, list[str]]
 
 def test_normal_sync_writes_only_unseen_urls():
     summary, written = run_sync(refresh_existing=False)
-    assert summary == {"fetched": 3, "upserted": 1}
+    assert summary == {
+        "fetched": 3,
+        "upserted": 1,
+        "added": 1,
+        "existing": 2,
+        "player_game_ids": [1],
+    }
     assert written == ["https://chess.com/game/3"]
 
 
 def test_force_sync_refreshes_the_candidate_window():
     summary, written = run_sync(refresh_existing=True)
-    assert summary == {"fetched": 3, "upserted": 3}
+    assert summary == {
+        "fetched": 3,
+        "upserted": 3,
+        "added": 1,
+        "existing": 2,
+        "player_game_ids": [1],
+    }
     assert len(written) == 3
 
 

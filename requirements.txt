@@ -1,8 +1,3 @@
-# Pipeline (chesspipe) dependencies. Prefer `pip install -e .` which reads
-# pyproject.toml; this file mirrors those deps for environments that want it.
+# Prefer `pip install -e .`; this mirrors pyproject.toml.
 python-chess
-python-dotenv
 requests
-psycopg[binary]
-python-telegram-bot
-cairosvg

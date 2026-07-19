@@ -212,17 +212,40 @@ class LocalEngine:
             if loss >= self._analysis_deep_threshold_cp:
                 candidates.append((loss, index))
 
+        sacrifice_candidates = {
+            index: offered
+            for index, move in enumerate(moves)
+            if (
+                offered := heuristics.brilliant_candidate(positions[index], move)
+            ) >= heuristics.BRILLIANT_MIN_SACRIFICE_CP
+        }
+
         deep_enabled = (
             self._analysis_deep_max_moves > 0
             and self._analysis_deep_depth > depth
         )
         if deep_enabled:
-            deep_move_indexes = {
+            # Reserve a few slots for possible brilliancies, then keep the
+            # existing loss-based deepening priority. Sacrifice candidates are
+            # normally rare, and all work still respects max_deep_moves.
+            sacrifice_order = [
                 index
-                for _priority, index in sorted(candidates, reverse=True)[
-                    : self._analysis_deep_max_moves
-                ]
-            }
+                for index, _offered in sorted(
+                    sacrifice_candidates.items(),
+                    key=lambda item: (item[1], -item[0]),
+                    reverse=True,
+                )
+            ]
+            brilliant_reserve = min(3, self._analysis_deep_max_moves)
+            deep_move_indexes = set(sacrifice_order[:brilliant_reserve])
+            for _priority, index in sorted(candidates, reverse=True):
+                if len(deep_move_indexes) >= self._analysis_deep_max_moves:
+                    break
+                deep_move_indexes.add(index)
+            for index in sacrifice_order[brilliant_reserve:]:
+                if len(deep_move_indexes) >= self._analysis_deep_max_moves:
+                    break
+                deep_move_indexes.add(index)
         else:
             deep_move_indexes = set()
 
@@ -233,7 +256,10 @@ class LocalEngine:
         for index in deep_move_indexes:
             deep_requirements[index] = max(
                 deep_requirements.get(index, 1),
-                self._analysis_deep_multipv,
+                max(
+                    self._analysis_deep_multipv,
+                    2 if index in sacrifice_candidates else 1,
+                ),
             )
             deep_requirements[index + 1] = max(
                 deep_requirements.get(index + 1, 1),
@@ -255,8 +281,24 @@ class LocalEngine:
                 )
             )
             played_best = played_rank == 1
+            best_cp = int(top[0]["score_cp"]) if top else None
+            second_best_cp = int(top[1]["score_cp"]) if len(top) > 1 else None
+            sacrifice_cp = sacrifice_candidates.get(index, 0)
+            brilliant = heuristics.is_brilliant_move(
+                centipawn_loss=centipawn_loss,
+                played_best=played_best,
+                eval_before_cp=eval_before_cp,
+                eval_after_cp=eval_after_cp,
+                sacrifice_cp=sacrifice_cp,
+                best_cp=best_cp,
+                second_best_cp=second_best_cp,
+            )
             classification = heuristics.classify_category(
-                centipawn_loss, played_best, eval_before_cp, eval_after_cp
+                centipawn_loss,
+                played_best,
+                eval_before_cp,
+                eval_after_cp,
+                brilliant=brilliant,
             )
 
             moves_out.append(
@@ -269,6 +311,17 @@ class LocalEngine:
                     "evaluation_change_cp": eval_after_cp - eval_before_cp,
                     "played_rank": played_rank,
                     "top_moves": top,
+                    "brilliant": {
+                        "verified": brilliant,
+                        "sacrifice_cp": sacrifice_cp,
+                        "alternative_gap_cp": (
+                            best_cp - second_best_cp
+                            if best_cp is not None and second_best_cp is not None
+                            else None
+                        ),
+                    }
+                    if sacrifice_cp
+                    else None,
                 }
             )
 
@@ -285,6 +338,9 @@ class LocalEngine:
                 "threshold_cp": self._analysis_deep_threshold_cp,
                 "max_moves": self._analysis_deep_max_moves,
                 "deepened_plies": sorted(index + 1 for index in deep_move_indexes),
+                "brilliant_candidate_plies": sorted(
+                    index + 1 for index in sacrifice_candidates
+                ),
                 "base_positions": len(positions),
                 "deep_positions": len(deep_requirements),
             },

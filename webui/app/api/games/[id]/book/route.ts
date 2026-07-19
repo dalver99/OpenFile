@@ -1,4 +1,5 @@
 import { getGameReview } from "@/server/repositories/games";
+import { lichessApiKey } from "@/server/database/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -110,11 +111,11 @@ export async function GET(
     return Response.json({ error: "invalid_game_id" }, { status: 400 });
   }
 
-  const token = process.env.LICHESS_API_KEY?.trim();
+  const token = lichessApiKey();
   if (!token) {
     return Response.json(
       { available: false, error: "lichess_api_key_missing" },
-      { status: 503 },
+      { status: 200 },
     );
   }
 

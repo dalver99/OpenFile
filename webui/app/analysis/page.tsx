@@ -5,6 +5,7 @@ import AnalysisWorkbench, {
 } from "@/features/analysis/AnalysisWorkbench";
 import type { GameReview } from "@/domain/games";
 import { getGameReview } from "@/server/repositories/games";
+import FavoriteButton from "@/features/games/FavoriteButton";
 
 type AnalysisSearchParams = Promise<{
   game?: string | string[];
@@ -115,10 +116,10 @@ export default async function AnalysisPage({
     : null;
 
   return (
-    <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
-      <section className="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700 dark:text-emerald-400">Local engine room</p>
+    <main className="mx-auto w-full max-w-[1800px] px-3 py-4 sm:px-5 sm:py-6 2xl:px-6">
+      <section className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end xl:mb-2 xl:items-center">
+        <div className="xl:hidden">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-700 dark:text-brand-400">Local engine room</p>
           <h1 className="mt-1 text-3xl font-black tracking-tight text-stone-900 dark:text-stone-50">Analysis board</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-500">
             {imported && sourceTitle
@@ -127,9 +128,12 @@ export default async function AnalysisPage({
           </p>
         </div>
         {review ? (
-          <Link href={`/games/${review.game.id}`} className="text-sm font-bold text-emerald-700 hover:underline dark:text-emerald-400">
-            ← Back to review
-          </Link>
+          <div className="flex items-center gap-2">
+            <FavoriteButton gameId={review.game.id} initialFavorite={review.game.is_favorite} showLabel />
+            <Link href={`/games/${review.game.id}`} className="text-sm font-bold text-brand-700 hover:underline dark:text-brand-400">
+              ← Back to review
+            </Link>
+          </div>
         ) : null}
       </section>
       <AnalysisWorkbench

@@ -2,7 +2,7 @@ import { Chess } from "chess.js";
 import type { CandidateLine, ReviewMove } from "@/domain/games";
 
 export const classificationMeta: Record<string, { label: string; color: string; symbol: string }> = {
-  brilliant: { label: "Brilliant", color: "#22c55e", symbol: "!!" },
+  brilliant: { label: "Brilliant", color: "#14b8a6", symbol: "!!" },
   great: { label: "Great", color: "#38bdf8", symbol: "!" },
   excellent: { label: "Excellent", color: "#84cc16", symbol: "👍" },
   best: { label: "Best", color: "#65a30d", symbol: "★" },
@@ -75,10 +75,15 @@ export function moveComment(
   const bestSan = moveToSan(move.fen_before, best) ?? best;
   const swing = loss >= 100 ? `${(loss / 100).toFixed(1)} pawns` : `${loss} centipawns`;
   const alternative = best && best !== move.move_uci ? ` The engine preferred ${bestSan}.` : "";
+  const firstScore = move.top_moves?.[0]?.score_cp;
+  const secondScore = move.top_moves?.[1]?.score_cp;
+  const alternativeGap = firstScore != null && secondScore != null
+    ? Math.max(0, firstScore - secondScore)
+    : null;
 
   switch (move.classification) {
     case "brilliant":
-      return `A difficult resource that changes the character of the position. The move finds the engine's tactical idea.`;
+      return `OpenFile Brilliant: ${move.san} is a sound material sacrifice and the engine's first choice.${alternativeGap != null ? ` The next-best option evaluates about ${(alternativeGap / 100).toFixed(1)} pawns worse.` : ""}`;
     case "great":
     case "excellent":
       return `A strong move that preserves the important features of the position.${alternative}`;

@@ -10,15 +10,13 @@ dict, so each maps cleanly onto an independent job / Lambda handler:
 
 Claiming flips the row to a transient state ('analyzing'/'generating') and
 commits immediately, so no row lock is held across a long engine call.
-Concurrent workers are safe via FOR UPDATE SKIP LOCKED.
+SQLite serializes the short claim transaction; engine work runs after commit.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
-
-from psycopg import Connection
-from psycopg.rows import dict_row
 
 from chesspipe.analyze.repository import (
     insert_game_analysis,
@@ -26,10 +24,11 @@ from chesspipe.analyze.repository import (
     merge_summary_for_storage,
 )
 from chesspipe.config import Settings
-from chesspipe.storage import get_connection
+from chesspipe.storage import Connection, get_connection
 from chesspipe.engine import build_engine, engine_identity
 from chesspipe.ingest.chesscom import ChessComClient
 from chesspipe.ingest.repository import get_target_player, sync_recent_games
+from chesspipe.ingest.runs import create_sync_run, record_sync_game, update_sync_run
 from chesspipe.log import log
 from chesspipe.puzzle.build import cook_record, load_move_rows
 from chesspipe.puzzle.lichess import GeneratorConfig, LichessStyleGenerator
@@ -44,8 +43,8 @@ def _set_status(conn: Connection, player_game_id: int, status: str, detail: str 
         cur.execute(
             """
             UPDATE player_games
-            SET status = %s, status_detail = %s, status_updated_at = now()
-            WHERE id = %s
+            SET status = ?, status_detail = ?, status_updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
             """,
             (status, detail, player_game_id),
         )
@@ -60,20 +59,19 @@ def _set_analysis_detail(settings: Settings, player_game_id: int, detail: str) -
 
 def _claim(conn: Connection, from_status: str, to_status: str, player_id: int | None) -> dict[str, Any] | None:
     """Atomically move one oldest row from ``from_status`` to ``to_status``."""
-    where_player = "AND player_id = %s" if player_id else ""
+    where_player = "AND player_id = ?" if player_id else ""
     params: list[Any] = [to_status, from_status]
     if player_id:
         params.append(player_id)
-    with conn.cursor(row_factory=dict_row) as cur:
+    with conn.cursor() as cur:
         cur.execute(
             f"""
             UPDATE player_games
-            SET status = %s, status_updated_at = now()
+            SET status = ?, status_updated_at = CURRENT_TIMESTAMP
             WHERE id = (
                 SELECT id FROM player_games
-                WHERE status = %s {where_player}
+                WHERE status = ? {where_player}
                 ORDER BY status_updated_at ASC
-                FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
             RETURNING id, game_id, player_id, side
@@ -85,23 +83,29 @@ def _claim(conn: Connection, from_status: str, to_status: str, player_id: int | 
 
 
 def _claim_specific_analysis(
-    conn: Connection, player_game_id: int, player_id: int
+    conn: Connection, player_game_id: int, player_id: int, *, force: bool = False
 ) -> dict[str, Any] | None:
     """Claim one explicitly requested game for on-demand review analysis."""
-    with conn.cursor(row_factory=dict_row) as cur:
+    with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE player_games
-            SET status = 'analyzing', status_detail = 'engine_starting', status_updated_at = now()
-            WHERE id = %s
-              AND player_id = %s
-              AND status IN ('ingested', 'selected', 'failed')
-              AND NOT EXISTS (
-                  SELECT 1 FROM game_analyses ga WHERE ga.player_game_id = player_games.id
+            SET status = 'analyzing', status_detail = 'engine_starting', status_updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+              AND player_id = ?
+              AND status NOT IN ('analyzing', 'generating')
+              AND (
+                  ? = 1
+                  OR (
+                      status IN ('ingested', 'selected', 'failed')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM game_analyses ga WHERE ga.player_game_id = player_games.id
+                      )
+                  )
               )
             RETURNING id, game_id, player_id, side
             """,
-            (player_game_id, player_id),
+            (player_game_id, player_id, 1 if force else 0),
         )
         row = cur.fetchone()
         return dict(row) if row else None
@@ -113,7 +117,7 @@ def _existing_analysis_id(conn: Connection, player_game_id: int, player_id: int)
             """
             SELECT ga.id
             FROM game_analyses ga
-            WHERE ga.player_game_id = %s AND ga.player_id = %s
+            WHERE ga.player_game_id = ? AND ga.player_id = ?
             """,
             (player_game_id, player_id),
         )
@@ -124,7 +128,7 @@ def _existing_analysis_id(conn: Connection, player_game_id: int, player_id: int)
 def _player_game_status(conn: Connection, player_game_id: int, player_id: int) -> str | None:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT status FROM player_games WHERE id = %s AND player_id = %s",
+            "SELECT status FROM player_games WHERE id = ? AND player_id = ?",
             (player_game_id, player_id),
         )
         row = cur.fetchone()
@@ -133,13 +137,13 @@ def _player_game_status(conn: Connection, player_game_id: int, player_id: int) -
 
 def _game_pgn(conn: Connection, game_id: int) -> str | None:
     with conn.cursor() as cur:
-        cur.execute("SELECT pgn FROM chesscom_games WHERE id = %s", (game_id,))
+        cur.execute("SELECT pgn FROM chesscom_games WHERE id = ?", (game_id,))
         row = cur.fetchone()
         return row[0] if row else None
 
 
 def _game_analysis_input(conn: Connection, player_game_id: int) -> dict[str, Any] | None:
-    with conn.cursor(row_factory=dict_row) as cur:
+    with conn.cursor() as cur:
         cur.execute(
             """
             SELECT ga.id AS game_analysis_id, ga.game_id,
@@ -150,7 +154,7 @@ def _game_analysis_input(conn: Connection, player_game_id: int) -> dict[str, Any
             FROM game_analyses ga
             JOIN chesscom_games g ON g.id = ga.game_id
             JOIN player_games pg ON pg.game_id = ga.game_id AND pg.player_id = ga.player_id
-            WHERE ga.player_game_id = %s
+            WHERE ga.player_game_id = ?
             """,
             (player_game_id,),
         )
@@ -161,7 +165,16 @@ def _game_analysis_input(conn: Connection, player_game_id: int) -> dict[str, Any
 # --------------------------------------------------------------------------- #
 # stages
 # --------------------------------------------------------------------------- #
-def ingest_stage(settings: Settings, *, force: bool = False) -> dict[str, Any]:
+def ingest_stage(
+    settings: Settings,
+    *,
+    force: bool = False,
+    archive_months: int | None = None,
+    max_sync_games: int | None = None,
+    sync_run_id: int | None = None,
+) -> dict[str, Any]:
+    months = max(1, min(24, archive_months or settings.recent_archive_months))
+    max_games = max(10, min(2_000, max_sync_games or settings.max_sync_games))
     with get_connection(settings.database_url, settings.db_schema) as conn:
         player = get_target_player(conn, settings.target_user_id)
         if player is None:
@@ -170,24 +183,74 @@ def ingest_stage(settings: Settings, *, force: bool = False) -> dict[str, Any]:
                 "status": "error",
                 "reason": "target_user_not_found_or_missing_chessdotcom_id",
             }
-        client = ChessComClient(settings.user_agent)
-        sync = sync_recent_games(
+        run_id = sync_run_id or create_sync_run(
             conn,
-            client,
-            int(player["id"]),
-            str(player["username"]),
-            archive_months=settings.recent_archive_months,
-            max_sync_games=settings.max_sync_games,
+            user_id=int(player["id"]),
+            archive_months=months,
+            max_games=max_games,
             refresh_existing=force,
-            log=log,
+        )
+        update_sync_run(conn, run_id, phase="connecting")
+        conn.commit()
+
+        def report(phase: str, values: dict[str, int]) -> None:
+            update_sync_run(conn, run_id, phase=phase, **values)
+            conn.commit()
+
+        def record_game(player_game_id: int, time_class: str | None) -> None:
+            record_sync_game(conn, run_id, player_game_id, time_class)
+
+        client = ChessComClient(settings.user_agent)
+        try:
+            sync = sync_recent_games(
+                conn,
+                client,
+                int(player["id"]),
+                str(player["username"]),
+                archive_months=months,
+                max_sync_games=max_games,
+                refresh_existing=force,
+                log=log,
+                progress=report,
+                record_new_game=record_game,
+            )
+        except Exception as exc:  # noqa: BLE001
+            update_sync_run(
+                conn,
+                run_id,
+                status="failed",
+                phase="failed",
+                error=str(exc)[:1_000],
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            conn.commit()
+            return {
+                "stage": "ingest",
+                "status": "error",
+                "sync_run_id": run_id,
+                "reason": str(exc),
+            }
+        update_sync_run(
+            conn,
+            run_id,
+            status="complete",
+            phase="complete",
+            checked=sync["fetched"],
+            added=sync["added"],
+            existing_count=sync["existing"],
+            processed=sync["upserted"],
+            finished_at=datetime.now(timezone.utc).isoformat(),
         )
         conn.commit()
     return {
         "stage": "ingest",
         "status": "ok",
+        "sync_run_id": run_id,
         "player_id": int(player["id"]),
         **sync,
         "forced": force,
+        "archive_months": months,
+        "max_sync_games": max_games,
     }
 
 
@@ -201,21 +264,20 @@ def select_stage(settings: Settings, limit: int = 1) -> dict[str, Any]:
     selected: list[dict[str, Any]] = []
     with get_connection(settings.database_url, settings.db_schema) as conn:
         for _ in range(max(1, limit)):
-            with conn.cursor(row_factory=dict_row) as cur:
+            with conn.cursor() as cur:
                 cur.execute(
                     """
                     UPDATE player_games
-                    SET status = 'selected', status_updated_at = now()
+                    SET status = 'selected', status_updated_at = CURRENT_TIMESTAMP
                     WHERE id = (
                         SELECT pg.id
                         FROM player_games pg
                         JOIN chesscom_games g ON g.id = pg.game_id
-                        WHERE pg.player_id = %s
+                        WHERE pg.player_id = ?
                           AND pg.status = 'ingested'
                           AND g.rules = 'chess'
                           AND g.pgn IS NOT NULL AND g.pgn <> ''
                         ORDER BY random()
-                        FOR UPDATE OF pg SKIP LOCKED
                         LIMIT 1
                     )
                     RETURNING id, game_id
@@ -294,11 +356,13 @@ def analyze_stage(settings: Settings) -> dict[str, Any]:
     return _analyze_claim(settings, claim)
 
 
-def analyze_game_stage(settings: Settings, player_game_id: int) -> dict[str, Any]:
+def analyze_game_stage(
+    settings: Settings, player_game_id: int, *, force: bool = False
+) -> dict[str, Any]:
     """Analyze one user-selected game, used by the web Game Review flow."""
     with get_connection(settings.database_url, settings.db_schema) as conn:
         existing_id = _existing_analysis_id(conn, player_game_id, settings.target_user_id)
-        if existing_id is not None:
+        if existing_id is not None and not force:
             return {
                 "stage": "analyze",
                 "status": "ok",
@@ -307,7 +371,12 @@ def analyze_game_stage(settings: Settings, player_game_id: int) -> dict[str, Any
                 "game_analysis_id": existing_id,
             }
 
-        claim = _claim_specific_analysis(conn, player_game_id, settings.target_user_id)
+        claim = _claim_specific_analysis(
+            conn,
+            player_game_id,
+            settings.target_user_id,
+            force=force,
+        )
         conn.commit()
         if claim is None:
             current_status = _player_game_status(conn, player_game_id, settings.target_user_id)

@@ -40,3 +40,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local OpenFile data/config overrides
+*.db
+*.db-wal
+*.db-shm
+rookline.config.json
+.openfile/
+openfile.config.json

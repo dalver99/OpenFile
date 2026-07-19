@@ -5,6 +5,7 @@
 :root {
   --background: #f7f6f2;
   --foreground: #1c1917;
+  --brand: #a12222;
 }
 
 .dark {
@@ -15,6 +16,17 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-brand-50: #fff5f5;
+  --color-brand-100: #fde8e8;
+  --color-brand-200: #f8caca;
+  --color-brand-300: #ee9b9b;
+  --color-brand-400: #df6666;
+  --color-brand-500: #c93e3e;
+  --color-brand-600: #b52a2a;
+  --color-brand-700: #a12222;
+  --color-brand-800: #7f1c1c;
+  --color-brand-900: #681b1b;
+  --color-brand-950: #380a0a;
   --font-sans: "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }

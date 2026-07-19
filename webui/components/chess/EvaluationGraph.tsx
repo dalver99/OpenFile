@@ -47,7 +47,7 @@ export default function EvaluationGraph({
           <p className="text-xs text-stone-500">White advantage above the center line, Black below</p>
         </div>
         <div className="flex items-center gap-3 text-xs text-stone-500">
-          <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-emerald-500" /> White</span>
+          <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-brand-500" /> White</span>
           <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-slate-700" /> Black</span>
         </div>
       </div> : null}

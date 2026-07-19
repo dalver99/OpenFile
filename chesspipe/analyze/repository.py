@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from psycopg import Connection
-from psycopg.types.json import Json
+from chesspipe.storage import Connection
 
 
 def build_player_summary(engine_moves: list[dict[str, Any]], player_side: str) -> dict[str, int]:
@@ -44,7 +44,7 @@ def insert_game_analysis(
                 player_game_id, game_id, player_id, engine_id, depth, multipv,
                 summary_json, engine_analysis_json
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (player_game_id) DO UPDATE SET
                 engine_id = EXCLUDED.engine_id,
                 depth = EXCLUDED.depth,
@@ -60,8 +60,8 @@ def insert_game_analysis(
                 engine_id,
                 depth,
                 multipv,
-                Json(summary_json),
-                Json(engine_analysis_json),
+                json.dumps(summary_json),
+                json.dumps(engine_analysis_json),
             ),
         )
         return int(cur.fetchone()[0])
@@ -86,7 +86,7 @@ def insert_move_analyses(
             m.get("evaluation_after_cp"),
             m.get("evaluation_change_cp"),
             m.get("played_rank"),
-            Json(m.get("top_moves") or []),
+            json.dumps(m.get("top_moves") or []),
             m.get("fen_before"),
             m.get("fen_after"),
         )
@@ -100,8 +100,21 @@ def insert_move_analyses(
                 centipawn_loss, evaluation_before_cp, evaluation_after_cp, evaluation_change_cp,
                 played_rank, top_moves, fen_before, fen_after
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (game_analysis_id, ply) DO NOTHING
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (game_analysis_id, ply) DO UPDATE SET
+                move_number = EXCLUDED.move_number,
+                side = EXCLUDED.side,
+                move_uci = EXCLUDED.move_uci,
+                san = EXCLUDED.san,
+                classification = EXCLUDED.classification,
+                centipawn_loss = EXCLUDED.centipawn_loss,
+                evaluation_before_cp = EXCLUDED.evaluation_before_cp,
+                evaluation_after_cp = EXCLUDED.evaluation_after_cp,
+                evaluation_change_cp = EXCLUDED.evaluation_change_cp,
+                played_rank = EXCLUDED.played_rank,
+                top_moves = EXCLUDED.top_moves,
+                fen_before = EXCLUDED.fen_before,
+                fen_after = EXCLUDED.fen_after
             """,
             rows,
         )

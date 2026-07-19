@@ -58,7 +58,6 @@ export async function POST(request: Request) {
       "--time", String(timeSec),
       "--max-pv", "14",
     ],
-    { ENGINE_MODE: "local" },
   );
   global._positionAnalysisProcess = child;
 

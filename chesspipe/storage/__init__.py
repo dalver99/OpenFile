@@ -1,10 +1,9 @@
 """Persistence adapters.
 
-PostgreSQL is the currently supported backend. Keeping it under an explicit
-adapter package prevents database-specific behavior from leaking into engine,
-ingest, and presentation modules as new storage backends are added.
+SQLite is the default local backend. Keeping it under an explicit adapter
+package prevents persistence details from leaking into chess features.
 """
 
-from chesspipe.storage.postgres import get_connection
+from chesspipe.storage.sqlite import Connection, get_connection, initialize_database
 
-__all__ = ["get_connection"]
+__all__ = ["Connection", "get_connection", "initialize_database"]

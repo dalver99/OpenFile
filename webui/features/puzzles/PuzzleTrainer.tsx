@@ -139,7 +139,7 @@ export default function PuzzleTrainer({ puzzles }: { puzzles: PuzzleCard[] }) {
         />
         <div className="rounded-3xl border border-dashed border-stone-300 bg-white p-10 text-center dark:border-stone-700 dark:bg-stone-900">
           <h2 className="text-lg font-black text-stone-900 dark:text-stone-50">No puzzles match these filters</h2>
-          <button type="button" onClick={() => { setPhaseFilter("all"); setStatusFilter("all"); }} className="mt-3 text-sm font-bold text-emerald-700 hover:underline dark:text-emerald-400">Clear filters</button>
+          <button type="button" onClick={() => { setPhaseFilter("all"); setStatusFilter("all"); }} className="mt-3 text-sm font-bold text-brand-700 hover:underline dark:text-brand-400">Clear filters</button>
         </div>
       </div>
     );
@@ -234,7 +234,7 @@ export default function PuzzleTrainer({ puzzles }: { puzzles: PuzzleCard[] }) {
   }
 
   const feedbackStyle = feedback?.kind === "ok"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200"
+    ? "border-brand-200 bg-brand-50 text-brand-900 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-200"
     : feedback?.kind === "err"
       ? "border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200"
       : "border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200";
@@ -269,18 +269,18 @@ export default function PuzzleTrainer({ puzzles }: { puzzles: PuzzleCard[] }) {
               onMove={handleBoardMove}
             />
           </div>
-          <p className="mt-2 text-center text-[11px] text-stone-400">Drag a piece, or click a piece and then its destination.</p>
+          <p className="mt-2 text-center text-[11px] text-stone-400">Drag or click to move · right-click marks · right-drag arrows.</p>
         </section>
 
         <aside className="flex min-h-[590px] flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 lg:min-h-[738px]">
           <div className="border-b border-stone-100 p-5 dark:border-stone-800">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">Your game · {titleCase(puzzle.phase)}</p>
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-brand-700 dark:text-brand-400">Your game · {titleCase(puzzle.phase)}</p>
                 <h2 className="mt-1 text-xl font-black text-stone-900 dark:text-stone-50">{goal}</h2>
               </div>
               {persistedState !== "todo" ? (
-                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${persistedState === "solved" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}`}>{result ? (persistedState === "solved" ? "Solved" : "Revealed") : (persistedState === "solved" ? "Solved before" : "Revealed before")}</span>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${persistedState === "solved" ? "bg-brand-100 text-brand-700 dark:bg-brand-950 dark:text-brand-300" : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}`}>{result ? (persistedState === "solved" ? "Solved" : "Revealed") : (persistedState === "solved" ? "Solved before" : "Revealed before")}</span>
               ) : null}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
@@ -307,7 +307,7 @@ export default function PuzzleTrainer({ puzzles }: { puzzles: PuzzleCard[] }) {
                 <div className="flex items-center justify-between"><h3 className="text-sm font-black text-stone-900 dark:text-stone-50">Best continuation</h3><span className="text-xs text-stone-400">Click a move to replay</span></div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {frames.map((frame, frameIndex) => (
-                    <button key={`${frame.uci}-${frameIndex}`} type="button" onClick={() => setSolutionPly(frameIndex + 1)} className={`rounded-lg px-2.5 py-1.5 font-mono text-xs font-bold ${solutionPly === frameIndex + 1 ? "bg-emerald-700 text-white" : "bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700"}`}>{frame.label}</button>
+                    <button key={`${frame.uci}-${frameIndex}`} type="button" onClick={() => setSolutionPly(frameIndex + 1)} className={`rounded-lg px-2.5 py-1.5 font-mono text-xs font-bold ${solutionPly === frameIndex + 1 ? "bg-brand-700 text-white" : "bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700"}`}>{frame.label}</button>
                   ))}
                 </div>
               </div>
@@ -328,7 +328,7 @@ export default function PuzzleTrainer({ puzzles }: { puzzles: PuzzleCard[] }) {
                 {!done ? (
                   <button type="button" onClick={() => void submit({ reveal: true })} disabled={busy} className="rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-bold text-stone-600 hover:border-amber-400 hover:text-amber-700 disabled:opacity-40 dark:border-stone-700 dark:text-stone-300">{busy ? "Checking…" : "Show solution"}</button>
                 ) : (
-                  <button type="button" onClick={() => setSolutionPly((current) => current >= frames.length ? 0 : current + 1)} className="rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-bold text-stone-600 hover:border-emerald-400 hover:text-emerald-700 dark:border-stone-700 dark:text-stone-300">Replay line</button>
+                  <button type="button" onClick={() => setSolutionPly((current) => current >= frames.length ? 0 : current + 1)} className="rounded-xl border border-stone-200 px-4 py-2.5 text-sm font-bold text-stone-600 hover:border-brand-400 hover:text-brand-700 dark:border-stone-700 dark:text-stone-300">Replay line</button>
                 )}
                 <button type="button" onClick={() => go(1)} disabled={activeIndex === visiblePuzzles.length - 1} className="rounded-xl bg-stone-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-35 dark:bg-stone-100 dark:text-stone-950" aria-label="Next puzzle">Next →</button>
               </div>
@@ -360,13 +360,13 @@ function QueueHeader({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3 text-sm"><strong className="text-stone-900 dark:text-stone-50">Training queue</strong><span className="text-xs text-stone-500">{solvedCount} solved · {puzzles.length - solvedCount} remaining</span></div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800"><div className="h-full rounded-full bg-emerald-600 transition-[width] duration-500" style={{ width: `${progress}%` }} /></div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800"><div className="h-full rounded-full bg-brand-600 transition-[width] duration-500" style={{ width: `${progress}%` }} /></div>
         </div>
         <div className="flex gap-2">
-          <select value={phaseFilter} onChange={(event) => onFilter("phase", event.target.value)} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-600 outline-none focus:border-emerald-500 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300" aria-label="Filter puzzles by phase">
+          <select value={phaseFilter} onChange={(event) => onFilter("phase", event.target.value)} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-600 outline-none focus:border-brand-500 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300" aria-label="Filter puzzles by phase">
             {phases.map((phase) => <option key={phase} value={phase}>{phase === "all" ? "All phases" : titleCase(phase)}</option>)}
           </select>
-          <select value={statusFilter} onChange={(event) => onFilter("status", event.target.value)} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-600 outline-none focus:border-emerald-500 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300" aria-label="Filter puzzles by status">
+          <select value={statusFilter} onChange={(event) => onFilter("status", event.target.value)} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-600 outline-none focus:border-brand-500 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300" aria-label="Filter puzzles by status">
             <option value="all">All puzzles</option><option value="todo">To solve</option><option value="completed">Completed</option>
           </select>
         </div>

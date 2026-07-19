@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { PuzzleCard } from "@/domain/puzzles";
-import { pool } from "@/server/database/postgres";
+import { pool } from "@/server/database/sqlite";
 import { WEBUI_USER_ID } from "@/server/current-user";
 
 type PuzzleSolution = {
@@ -26,7 +26,7 @@ export async function listPuzzles(limit = 100): Promise<PuzzleCard[]> {
     `SELECT p.id, p.fen_before, p.last_move_uci, p.side_to_move, p.phase, p.tag,
             p.themes, p.cp_loss, p.is_mate, p.mate_in, p.difficulty, p.quality_score,
             p.solution_uci, p.solution_san, p.solution_line_uci,
-            p.time_class, p.opponent_username, to_char(p.played_at, 'YYYY-MM-DD') AS played_at,
+            p.time_class, p.opponent_username, substr(p.played_at, 1, 10) AS played_at,
             pp.status AS progress_status, COALESCE(pp.attempts, 0) AS attempts
      FROM puzzles p
      LEFT JOIN puzzle_progress pp ON pp.puzzle_id = p.id AND pp.user_id = $1
@@ -38,6 +38,10 @@ export async function listPuzzles(limit = 100): Promise<PuzzleCard[]> {
   );
   return rows.map((raw) => {
     const row = raw as PuzzleCard & PuzzleSolution;
+    row.themes = typeof row.themes === "string" ? JSON.parse(row.themes) : row.themes;
+    row.solution_line_uci = typeof row.solution_line_uci === "string"
+      ? JSON.parse(row.solution_line_uci)
+      : row.solution_line_uci;
     solutionCache.set(solutionCacheKey(row.id), {
       solution_uci: row.solution_uci,
       solution_san: row.solution_san,
@@ -63,7 +67,13 @@ export async function getPuzzleSolution(puzzleId: number): Promise<PuzzleSolutio
     [puzzleId, WEBUI_USER_ID],
   );
   if (!rows.length) return null;
-  const solution = rows[0] as PuzzleSolution;
+  const raw = rows[0] as PuzzleSolution;
+  const solution = {
+    ...raw,
+    solution_line_uci: typeof raw.solution_line_uci === "string"
+      ? JSON.parse(raw.solution_line_uci)
+      : raw.solution_line_uci,
+  };
   solutionCache.set(key, solution);
   return solution;
 }

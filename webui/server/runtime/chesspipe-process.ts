@@ -7,11 +7,14 @@ export function localOperationsEnabled(): boolean {
 }
 
 function projectRoot(): string {
-  return process.env.CHESSPIPE_ROOT ?? "..";
+  return process.env.CHESSPIPE_ROOT?.trim() || "..";
 }
 
 function pythonExecutable(): string {
-  return process.env.CHESSPIPE_PYTHON ?? ".venv/bin/python";
+  return process.env.CHESSPIPE_PYTHON?.trim()
+    || (process.platform === "win32"
+      ? ".venv\\Scripts\\python.exe"
+      : ".venv/bin/python");
 }
 
 function workerEnvironment(

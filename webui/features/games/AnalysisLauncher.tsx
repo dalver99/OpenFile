@@ -57,7 +57,7 @@ export default function AnalysisLauncher({ gameId, initialStatus }: { gameId: nu
     (state.status === "selected" ? "Queued on this Mac" : "Analysis worker is running");
   return (
     <div className="mx-auto max-w-xl rounded-3xl border border-stone-200 bg-white p-8 text-center shadow-sm dark:border-stone-700 dark:bg-stone-900 sm:p-12">
-      <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-2xl ${failed ? "bg-rose-100 text-rose-600" : "bg-emerald-100 text-emerald-700"}`}>
+      <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-2xl ${failed ? "bg-rose-100 text-rose-600" : "bg-brand-100 text-brand-700"}`}>
         <span className={failed ? "text-2xl" : "text-2xl animate-pulse"}>{failed ? "!" : "♞"}</span>
       </div>
       <h1 className="mt-6 text-2xl font-bold tracking-tight text-stone-900 dark:text-stone-50">
@@ -71,7 +71,7 @@ export default function AnalysisLauncher({ gameId, initialStatus }: { gameId: nu
       {!failed ? (
         <div className="mt-7">
           <div className="h-2 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
-            <div className="h-full w-2/5 animate-[review-progress_2.2s_ease-in-out_infinite] rounded-full bg-emerald-500" />
+            <div className="h-full w-2/5 animate-[review-progress_2.2s_ease-in-out_infinite] rounded-full bg-brand-500" />
           </div>
           <p className="mt-3 text-xs font-medium uppercase tracking-[0.18em] text-stone-400 dark:text-stone-500">
             {phase} · {seconds}s elapsed

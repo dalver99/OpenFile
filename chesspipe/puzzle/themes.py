@@ -13,14 +13,11 @@ from __future__ import annotations
 
 import chess
 
-_VALUES = {
-    chess.PAWN: 100,
-    chess.KNIGHT: 320,
-    chess.BISHOP: 330,
-    chess.ROOK: 500,
-    chess.QUEEN: 900,
-    chess.KING: 20000,
-}
+from chesspipe.material import (
+    PIECE_VALUES as _VALUES,
+    sacrifice_value,
+    static_exchange_eval,
+)
 
 _PRIORITY = (
     "mate",
@@ -33,63 +30,6 @@ _PRIORITY = (
     "tactical",
     "positional",
 )
-
-
-def _value(piece: chess.Piece | None) -> int:
-    return _VALUES.get(piece.piece_type, 0) if piece else 0
-
-
-def _lva_capture(board: chess.Board, to_square: int) -> chess.Move | None:
-    """Least-valuable legal capture onto ``to_square`` for the side to move."""
-    best_move: chess.Move | None = None
-    best_value: int | None = None
-    for from_square in board.attackers(board.turn, to_square):
-        piece = board.piece_at(from_square)
-        if piece is None:
-            continue
-        promotion = None
-        if piece.piece_type == chess.PAWN and chess.square_rank(to_square) in (0, 7):
-            promotion = chess.QUEEN
-        move = chess.Move(from_square, to_square, promotion=promotion)
-        if not board.is_legal(move):
-            continue
-        value = _VALUES[piece.piece_type]
-        if best_value is None or value < best_value:
-            best_value = value
-            best_move = move
-    return best_move
-
-
-def static_exchange_eval(board: chess.Board, move: chess.Move) -> int:
-    """Net material (centipawns, mover POV) of the capture sequence on the target square."""
-    to_square = move.to_square
-    if board.is_en_passant(move):
-        captured = _VALUES[chess.PAWN]
-    else:
-        captured = _value(board.piece_at(to_square))
-
-    board = board.copy(stack=False)
-    board.push(move)
-
-    on_square = _VALUES[move.promotion] if move.promotion else _value_at_after(board, to_square)
-    gains = [captured + (_VALUES[move.promotion] - _VALUES[chess.PAWN] if move.promotion else 0)]
-
-    while True:
-        recapture = _lva_capture(board, to_square)
-        if recapture is None:
-            break
-        gains.append(on_square - gains[-1])
-        capturing_value = _value(board.piece_at(recapture.from_square))
-        on_square = _VALUES[recapture.promotion] if recapture.promotion else capturing_value
-        board.push(recapture)
-
-    for i in range(len(gains) - 1, 0, -1):
-        gains[i - 1] = -max(-gains[i - 1], gains[i])
-    return gains[0]
-
-
-def _value_at_after(board: chess.Board, square: int) -> int:
-    return _value(board.piece_at(square))
 
 
 def _fork_targets(after: chess.Board, from_to_square: int) -> int:
@@ -109,13 +49,6 @@ def _fork_targets(after: chess.Board, from_to_square: int) -> int:
         if _VALUES[target.piece_type] > attacker_value or not defended:
             targets += 1
     return targets
-
-
-def _hanging_after_quiet_move(after: chess.Board, to_square: int) -> int:
-    capture = _lva_capture(after, to_square)
-    if capture is None:
-        return 0
-    return static_exchange_eval(after, capture)
 
 
 def detect_themes(
@@ -153,16 +86,9 @@ def detect_themes(
     if _fork_targets(after, move.to_square) >= 2:
         themes.append("fork")
 
-    invests_material = False
-    if is_capture or is_promotion:
-        see = static_exchange_eval(board, move)
-        if see >= 200:
-            themes.append("wins_material")
-        elif see <= -100:
-            invests_material = True
-    else:
-        if _hanging_after_quiet_move(after, move.to_square) >= 200:
-            invests_material = True
+    invests_material = sacrifice_value(board, move) >= 100
+    if (is_capture or is_promotion) and static_exchange_eval(board, move) >= 200:
+        themes.append("wins_material")
 
     winning_after = best_cp >= 150 or is_mate
     if invests_material and winning_after:

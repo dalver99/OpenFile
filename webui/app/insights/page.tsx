@@ -19,7 +19,7 @@ function EmptyInsights() {
       <div className="text-4xl">♟</div>
       <h2 className="mt-4 text-xl font-black text-stone-900 dark:text-stone-50">No reviewed games yet</h2>
       <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-stone-500">Analyze a few games first. This page will then find recurring phase, opening, time-control, and clock-pressure patterns.</p>
-      <Link href="/games" className="mt-5 inline-flex rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">Choose games to analyze</Link>
+      <Link href="/games" className="mt-5 inline-flex rounded-xl bg-brand-700 px-4 py-2 text-sm font-bold text-white hover:bg-brand-800">Choose games to analyze</Link>
     </div>
   );
 }
@@ -36,7 +36,7 @@ export default async function InsightsPage() {
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
       <section className="mb-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700 dark:text-emerald-400">Patterns from your reviews</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-700 dark:text-brand-400">Patterns from your reviews</p>
         <h1 className="mt-2 text-3xl font-black tracking-tight text-stone-900 dark:text-stone-50 sm:text-4xl">Insights</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-500">A player-specific view of where your decisions lose value. These are engine signals, not verdicts—the sample size is shown so you can judge how much to trust each pattern.</p>
       </section>
@@ -49,8 +49,8 @@ export default async function InsightsPage() {
             {[
               [insights.reviewedGames, "Reviewed games"],
               [`${insights.averageAccuracy}%`, "Average review score"],
+              [insights.brilliantMoves, "Brilliant moves"],
               [insights.severeErrors, "Mistakes + blunders"],
-              [insights.totalMoves, "Your moves measured"],
             ].map(([value, label]) => (
               <div key={label} className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-stone-900">
                 <strong className="block text-2xl font-black text-stone-900 dark:text-stone-50">{value}</strong>
@@ -59,12 +59,35 @@ export default async function InsightsPage() {
             ))}
           </section>
 
+          {insights.brilliancies.length ? (
+            <section className="rounded-3xl border border-teal-200 bg-gradient-to-br from-teal-50 to-white p-6 shadow-sm dark:border-teal-900 dark:from-teal-950/40 dark:to-stone-900">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-teal-700 dark:text-teal-400">OpenFile Brilliant</p>
+                  <h2 className="mt-1 text-xl font-black text-stone-900 dark:text-stone-50">Your brilliancy reel</h2>
+                </div>
+                <p className="text-xs text-stone-500">Verified best-move material sacrifices</p>
+              </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {insights.brilliancies.map((move) => (
+                  <Link key={`${move.gameId}-${move.moveNumber}-${move.side}`} href={`/games/${move.gameId}`} className="group flex items-center gap-4 rounded-2xl border border-teal-200 bg-white/90 p-4 transition hover:-translate-y-0.5 hover:shadow-md dark:border-teal-900 dark:bg-stone-900/90">
+                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-teal-500 text-sm font-black text-white shadow-sm">!!</span>
+                    <span className="min-w-0">
+                      <strong className="block text-lg text-stone-900 group-hover:text-teal-700 dark:text-stone-50 dark:group-hover:text-teal-300">{move.moveNumber}{move.side === "black" ? "…" : "."} {move.san}</strong>
+                      <span className="block truncate text-xs text-stone-500">{move.opening} · {move.playedAt ?? "Unknown date"}</span>
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          ) : null}
+
           <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-            <div className="rounded-3xl border border-emerald-200 bg-emerald-50/70 p-6 dark:border-emerald-900 dark:bg-emerald-950/30">
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400">What to work on next</p>
+            <div className="rounded-3xl border border-brand-200 bg-brand-50/70 p-6 dark:border-brand-900 dark:bg-brand-950/30">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-700 dark:text-brand-400">What to work on next</p>
               <h2 className="mt-2 text-xl font-black text-stone-900 dark:text-stone-50">{insights.focus.title}</h2>
               <p className="mt-2 text-sm leading-6 text-stone-600 dark:text-stone-300">{insights.focus.detail}</p>
-              {insights.focus.href ? <Link href={insights.focus.href} className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-emerald-800 hover:underline dark:text-emerald-300">Open a relevant review <span aria-hidden>→</span></Link> : null}
+              {insights.focus.href ? <Link href={insights.focus.href} className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-brand-800 hover:underline dark:text-brand-300">Open a relevant review <span aria-hidden>→</span></Link> : null}
             </div>
 
             <div className="rounded-3xl border border-stone-200 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-stone-900">
@@ -91,7 +114,7 @@ export default async function InsightsPage() {
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               {insights.phase.map((slice) => (
                 <article key={slice.label} className="rounded-2xl border border-stone-200 p-4 dark:border-stone-700">
-                  <div className="flex items-center justify-between"><h3 className="font-black text-stone-900 dark:text-stone-50">{slice.label}</h3><span className="text-sm font-bold text-emerald-700 dark:text-emerald-400">{slice.accuracy}%</span></div>
+                  <div className="flex items-center justify-between"><h3 className="font-black text-stone-900 dark:text-stone-50">{slice.label}</h3><span className="text-sm font-bold text-brand-700 dark:text-brand-400">{slice.accuracy}%</span></div>
                   <p className="mt-2 text-sm text-stone-500">{slice.averageLoss} avg CPL · {slice.severeErrors} severe errors</p>
                   <ErrorRate slice={slice} />
                   <p className="mt-2 text-xs text-stone-400">{slice.moves} moves across {slice.games} games</p>
@@ -119,11 +142,11 @@ export default async function InsightsPage() {
               <div className="mt-5 flex h-40 items-end gap-1.5 border-b border-stone-200 dark:border-stone-700">
                 {insights.trend.map((game) => (
                   <Link key={game.id} href={`/games/${game.id}`} className="group flex h-full min-w-0 flex-1 items-end" title={`${game.playedAt ?? "Unknown date"}: ${game.accuracy}%`}>
-                    <span className={`block w-full rounded-t transition-opacity group-hover:opacity-70 ${game.result === "win" ? "bg-emerald-500" : game.result === "draw" ? "bg-sky-400" : "bg-orange-400"}`} style={{ height: `${Math.max(8, game.accuracy)}%` }} />
+                    <span className={`block w-full rounded-t transition-opacity group-hover:opacity-70 ${game.result === "win" ? "bg-brand-500" : game.result === "draw" ? "bg-sky-400" : "bg-orange-400"}`} style={{ height: `${Math.max(8, game.accuracy)}%` }} />
                   </Link>
                 ))}
               </div>
-              <div className="mt-3 flex gap-4 text-xs text-stone-500"><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-emerald-500" />Win</span><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-400" />Draw</span><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-orange-400" />Loss</span></div>
+              <div className="mt-3 flex gap-4 text-xs text-stone-500"><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-brand-500" />Win</span><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-400" />Draw</span><span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-orange-400" />Loss</span></div>
             </div>
           </section>
 
@@ -134,7 +157,7 @@ export default async function InsightsPage() {
                 <thead className="text-xs uppercase tracking-wide text-stone-400"><tr><th className="pb-3 font-semibold">Opening</th><th className="pb-3 font-semibold">Games</th><th className="pb-3 font-semibold">Score</th><th className="pb-3 font-semibold">Review score</th><th className="pb-3 text-right font-semibold">Severe errors</th></tr></thead>
                 <tbody className="divide-y divide-stone-100 dark:divide-stone-800">
                   {insights.openings.map((opening) => (
-                    <tr key={opening.label}><td className="max-w-sm py-3 pr-4 font-semibold text-stone-900 dark:text-stone-50">{opening.label}</td><td className="py-3 text-stone-500">{opening.games}</td><td className="py-3 text-stone-500">{opening.winRate}%</td><td className="py-3 font-bold text-emerald-700 dark:text-emerald-400">{opening.accuracy}%</td><td className="py-3 text-right text-stone-500">{opening.severeErrors}</td></tr>
+                    <tr key={opening.label}><td className="max-w-sm py-3 pr-4 font-semibold text-stone-900 dark:text-stone-50">{opening.label}</td><td className="py-3 text-stone-500">{opening.games}</td><td className="py-3 text-stone-500">{opening.winRate}%</td><td className="py-3 font-bold text-brand-700 dark:text-brand-400">{opening.accuracy}%</td><td className="py-3 text-right text-stone-500">{opening.severeErrors}</td></tr>
                   ))}
                 </tbody>
               </table>

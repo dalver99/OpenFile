@@ -17,7 +17,7 @@ The core idea (unlike a single "best move you missed"):
   or mate is delivered.
 
 Engine access goes through :class:`chesspipe.engine.EngineClient`, so cooking
-runs identically on a local UCI binary or the remote engine_server.
+runs against the configured local UCI binary.
 """
 
 from __future__ import annotations

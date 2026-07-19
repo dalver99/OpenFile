@@ -13,8 +13,7 @@ from typing import Any, Iterator, Optional
 import chess
 import chess.pgn
 from chess.engine import PovScore
-from psycopg import Connection
-from psycopg.rows import dict_row
+from chesspipe.storage import Connection
 
 from chesspipe.puzzle.lichess import GamePuzzle, LichessStyleGenerator, cp_to_score
 from chesspipe.puzzle.phase import classify_phase
@@ -24,7 +23,7 @@ from chesspipe.puzzle.themes import detect_themes
 def analyzed_game_analyses(conn: Connection, limit: int | None = None) -> list[dict[str, Any]]:
     """Game analyses available for puzzle generation (most recent first)."""
     clause = f"LIMIT {int(limit)}" if limit else ""
-    with conn.cursor(row_factory=dict_row) as cur:
+    with conn.cursor() as cur:
         cur.execute(
             f"""
             SELECT ga.id AS game_analysis_id, ga.game_id,
@@ -44,12 +43,12 @@ def analyzed_game_analyses(conn: Connection, limit: int | None = None) -> list[d
 
 
 def _move_rows(conn: Connection, game_analysis_id: int) -> list[dict[str, Any]]:
-    with conn.cursor(row_factory=dict_row) as cur:
+    with conn.cursor() as cur:
         cur.execute(
             """
             SELECT ply, side, evaluation_after_cp
             FROM move_analyses
-            WHERE game_analysis_id = %s
+            WHERE game_analysis_id = ?
             ORDER BY ply
             """,
             (game_analysis_id,),

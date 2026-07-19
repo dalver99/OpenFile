@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Chessboard } from "react-chessboard";
 import type { Arrow, PieceDropHandlerArgs, SquareHandlerArgs } from "react-chessboard";
 import { sideToMove } from "@/lib/chess";
@@ -24,6 +24,20 @@ type Props = {
 
 type Selection = { square: string; pieceType: string };
 
+const annotationColors = {
+  default: "rgba(239, 68, 68, 0.55)",
+  shift: "rgba(34, 197, 94, 0.52)",
+  control: "rgba(245, 158, 11, 0.58)",
+  alt: "rgba(59, 130, 246, 0.52)",
+} as const;
+
+function annotationColor(event: React.MouseEvent): string {
+  if (event.altKey) return annotationColors.alt;
+  if (event.shiftKey) return annotationColors.shift;
+  if (event.ctrlKey || event.metaKey) return annotationColors.control;
+  return annotationColors.default;
+}
+
 // react-chessboard piece codes are "wP" / "bN" / etc: color prefix + FEN letter.
 function pieceColor(pieceType: string): "white" | "black" {
   return pieceType.startsWith("w") ? "white" : "black";
@@ -44,10 +58,12 @@ export default function Board({
   highlightColor = "#f59e0b",
   arrows = [],
   badge = null,
-  allowDrawingArrows = false,
+  allowDrawingArrows = true,
   onMove,
 }: Props) {
   const [selected, setSelected] = useState<Selection | null>(null);
+  const [coloredSquares, setColoredSquares] = useState<Record<string, string>>({});
+  const rightDownSquare = useRef<string | null>(null);
   const mover = sideToMove(fen);
 
   function handleSquareClick({ piece, square }: SquareHandlerArgs) {
@@ -77,9 +93,46 @@ export default function Board({
     return true;
   }
 
+  function handleSquareMouseDown(
+    { square }: SquareHandlerArgs,
+    event: React.MouseEvent,
+  ) {
+    if (event.button === 0) {
+      setColoredSquares({});
+      rightDownSquare.current = null;
+    } else if (event.button === 2) {
+      rightDownSquare.current = square;
+    }
+  }
+
+  function handleSquareMouseUp(
+    { square }: SquareHandlerArgs,
+    event: React.MouseEvent,
+  ) {
+    const start = rightDownSquare.current;
+    rightDownSquare.current = null;
+    if (event.button !== 2 || start !== square) return;
+    const color = annotationColor(event);
+    setColoredSquares((current) => {
+      if (current[square] === color) {
+        const next = { ...current };
+        delete next[square];
+        return next;
+      }
+      return { ...current, [square]: color };
+    });
+  }
+
   const squareStyles: Record<string, React.CSSProperties> = {};
+  for (const [square, color] of Object.entries(coloredSquares)) {
+    squareStyles[square] = { backgroundColor: color };
+  }
   for (const sq of highlight) {
-    squareStyles[sq] = { outline: `3px solid ${highlightColor}`, outlineOffset: "-3px" };
+    squareStyles[sq] = {
+      ...squareStyles[sq],
+      outline: `3px solid ${highlightColor}`,
+      outlineOffset: "-3px",
+    };
   }
   if (selected) {
     squareStyles[selected.square] = {
@@ -90,7 +143,7 @@ export default function Board({
   }
 
   return (
-    <div className="w-full overflow-hidden rounded-lg border border-zinc-300 shadow-sm dark:border-zinc-700">
+    <div className="w-full overflow-hidden border border-zinc-300 shadow-sm dark:border-zinc-700">
       <Chessboard
         options={{
           position: fen,
@@ -100,7 +153,11 @@ export default function Board({
           squareStyles,
           arrows,
           squareRenderer: ({ square, children }) => (
-            <div className="relative h-full w-full">
+            <div
+              className="relative h-full w-full"
+              data-user-annotation={coloredSquares[square] ? "square" : undefined}
+              style={squareStyles[square]}
+            >
               {children}
               {badge?.square === square ? (
                 <span
@@ -116,11 +173,14 @@ export default function Board({
           ),
           allowDrawingArrows,
           clearArrowsOnPositionChange: false,
+          clearArrowsOnClick: true,
           darkSquareStyle: { backgroundColor: "#7c9b5f" },
           lightSquareStyle: { backgroundColor: "#eaeed3" },
           canDragPiece: ({ piece }) => !disabled && pieceColor(piece.pieceType) === mover,
           onPieceDrop: handlePieceDrop,
           onSquareClick: handleSquareClick,
+          onSquareMouseDown: handleSquareMouseDown,
+          onSquareMouseUp: handleSquareMouseUp,
         }}
       />
     </div>

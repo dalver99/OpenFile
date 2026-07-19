@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from psycopg import Connection
-from psycopg.types.json import Json
+from chesspipe.storage import Connection
 
 
 def insert_puzzle(conn: Connection, record: dict[str, Any]) -> bool:
@@ -18,10 +18,10 @@ def insert_puzzle(conn: Connection, record: dict[str, Any]) -> bool:
                 difficulty, quality_score, time_class, opponent_username, played_at
             )
             VALUES (
-                %s, %s, %s, %s,
-                %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?
             )
             ON CONFLICT (game_analysis_id, mistake_ply) DO NOTHING
             """,
@@ -34,11 +34,11 @@ def insert_puzzle(conn: Connection, record: dict[str, Any]) -> bool:
                 record["last_move_uci"],
                 record["solution_uci"],
                 record["solution_san"],
-                Json(record["solution_line_uci"]),
+                json.dumps(record["solution_line_uci"]),
                 record["side_to_move"],
                 record["phase"],
                 record["tag"],
-                Json(record["themes"]),
+                json.dumps(record["themes"]),
                 record["cp_loss"],
                 record["is_mate"],
                 record["mate_in"],

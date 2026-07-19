@@ -1,23 +1,25 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chesspipe"
-version = "0.2.0"
-description = "Database-driven chess puzzle pipeline (ingest -> analyze -> generate -> solve)."
+name = "openfile-chess"
+version = "0.3.0"
+description = "Local-first, open-source Chess.com review and puzzle trainer powered by Stockfish."
+license = "AGPL-3.0-only"
 requires-python = ">=3.10"
 dependencies = [
     "python-chess",
-    "python-dotenv",
     "requests",
-    "psycopg[binary]",
-    "python-telegram-bot",
-    "cairosvg",
 ]
 
 [project.scripts]
 chesspipe = "chesspipe.cli:main"
+openfile = "chesspipe.cli:main"
+rookline = "chesspipe.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["chesspipe*"]
+
+[tool.setuptools.package-data]
+"chesspipe.storage" = ["schema.sql"]

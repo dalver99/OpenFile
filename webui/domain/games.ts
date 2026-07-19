@@ -18,12 +18,15 @@ export type GameCard = {
   opening: string | null;
   analyzed: boolean;
   analysis_depth: number | null;
+  is_favorite: boolean;
 };
 
 export type GameListFilters = {
   query: string;
   timeClass: "rapid" | "blitz" | "bullet" | "all";
   review: "all" | "reviewed" | "waiting";
+  favorite: "all" | "favorites";
+  syncRunId: number | null;
 };
 
 export type GamePage = {
@@ -37,6 +40,8 @@ export type GamePage = {
 export type GameArchiveStats = {
   total: number;
   reviewed: number;
+  waiting: number;
+  analyzing: number;
 };
 
 export type CandidateLine = {
@@ -61,6 +66,7 @@ export type ReviewMove = {
   top_moves: CandidateLine[];
   fen_before: string;
   fen_after: string;
+  clock_seconds: number | null;
 };
 
 export type ReviewSideline = {

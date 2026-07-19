@@ -2,7 +2,7 @@
 
 Both backends expose per-position analysis (needed to cook Lichess-style
 puzzles) and whole-game analysis (the analyze stage), so switching between a
-local UCI binary and the remote engine_server is purely a config choice.
+local UCI binary without coupling chess features to python-chess internals.
 """
 
 from __future__ import annotations

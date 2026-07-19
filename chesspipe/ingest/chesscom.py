@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any
 
 import requests
@@ -63,17 +64,29 @@ class ChessComClient:
         payload = self._get_json(f"{BASE_URL}/player/{username.lower()}/games/archives")
         return payload.get("archives", [])
 
-    def recent_games(self, username: str, archive_months: int) -> list[ChessComGame]:
+    def recent_games(
+        self,
+        username: str,
+        archive_months: int,
+        progress: Callable[[str, dict[str, int]], None] | None = None,
+    ) -> list[ChessComGame]:
         archives = self.archive_urls(username)
         selected = archives[-archive_months:] if archive_months > 0 else archives
+        if progress:
+            progress("fetching", {"archives_total": len(selected), "archives_done": 0})
 
         games: list[ChessComGame] = []
-        for archive_url in selected:
+        for index, archive_url in enumerate(selected, start=1):
             payload = self._get_json(archive_url)
             for raw_game in payload.get("games", []):
                 parsed = self._parse_game(username, raw_game)
                 if parsed is not None:
                     games.append(parsed)
+            if progress:
+                progress(
+                    "fetching",
+                    {"archives_total": len(selected), "archives_done": index},
+                )
 
         return sorted(games, key=lambda game: game.end_time or 0, reverse=True)
 

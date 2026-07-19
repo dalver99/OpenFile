@@ -1,6 +1,8 @@
 import "server-only";
 
-const configuredUserId = Number(process.env.WEBUI_USER_ID ?? "1");
+import { localConfig } from "@/server/database/config";
+
+const configuredUserId = Number(process.env.WEBUI_USER_ID ?? localConfig().target_user_id ?? "1");
 
 if (!Number.isSafeInteger(configuredUserId) || configuredUserId <= 0) {
   throw new Error("WEBUI_USER_ID must be a positive integer.");

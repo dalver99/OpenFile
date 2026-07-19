@@ -10,7 +10,7 @@ export default function EvaluationBar({ cp }: { cp: number }) {
   return (
     <div
       aria-label={`Evaluation ${formatEvaluation(cp)}`}
-      className="relative h-full min-h-0 overflow-hidden rounded-lg border border-stone-700 bg-stone-950 shadow-inner"
+      className="relative h-full min-h-0 overflow-hidden border border-stone-700 bg-stone-950 shadow-inner"
       title={`Evaluation ${formatEvaluation(cp)}`}
     >
       <div

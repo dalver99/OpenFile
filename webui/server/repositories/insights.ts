@@ -6,11 +6,11 @@ import type {
   PlayerInsights,
 } from "@/domain/insights";
 import { WEBUI_USER_ID } from "@/server/current-user";
-import { pool } from "@/server/database/postgres";
+import { pool } from "@/server/database/sqlite";
 
 type PhaseName = "Opening" | "Middlegame" | "Endgame";
 
-type InsightRow = {
+type InsightMoveRow = {
   player_game_id: number;
   played_at: string | null;
   time_class: string | null;
@@ -19,12 +19,11 @@ type InsightRow = {
   result: string;
   opening: string | null;
   pgn: string;
-  moves: Array<{
-    ply: number;
-    move_number: number;
-    classification: string;
-    centipawn_loss: number | null;
-  }>;
+  ply: number;
+  move_number: number;
+  san: string;
+  classification: string;
+  centipawn_loss: number | null;
 };
 
 type GameAccumulator = {
@@ -39,6 +38,7 @@ type GameAccumulator = {
   moves: Array<{
     ply: number;
     moveNumber: number;
+    san: string;
     classification: string;
     loss: number;
   }>;
@@ -120,29 +120,23 @@ function makeSlice(label: string, games: GameAccumulator[], moves: GameAccumulat
 
 export async function getPlayerInsights(): Promise<PlayerInsights> {
   const [moveResult, archiveResult] = await Promise.all([
-    pool.query<InsightRow>(
+    pool.query<InsightMoveRow>(
       `SELECT pg.id::int AS player_game_id,
-              to_char(g.end_time, 'YYYY-MM-DD') AS played_at, g.time_class, g.time_control,
+              substr(g.end_time, 1, 10) AS played_at, g.time_class, g.time_control,
               pg.side AS player_side, pg.result,
               CASE WHEN g.eco_url IS NULL THEN NULL
-                   ELSE replace(regexp_replace(g.eco_url, '^.*/', ''), '-', ' ')
+                   WHEN instr(g.eco_url, '/openings/') > 0
+                   THEN replace(substr(g.eco_url, instr(g.eco_url, '/openings/') + 10), '-', ' ')
+                   ELSE g.eco_url
               END AS opening,
               g.pgn,
-              jsonb_agg(
-                jsonb_build_object(
-                  'ply', ma.ply,
-                  'move_number', ma.move_number,
-                  'classification', ma.classification,
-                  'centipawn_loss', ma.centipawn_loss
-                ) ORDER BY ma.ply
-              ) AS moves
+              ma.ply, ma.move_number, ma.san, ma.classification, ma.centipawn_loss
        FROM game_analyses ga
        JOIN player_games pg ON pg.id = ga.player_game_id AND pg.player_id = ga.player_id
        JOIN chesscom_games g ON g.id = pg.game_id
        JOIN move_analyses ma ON ma.game_analysis_id = ga.id AND ma.side = pg.side
        WHERE ga.player_id = $1 AND pg.player_id = $1 AND g.rules = 'chess'
-       GROUP BY ga.id, pg.id, g.id
-       ORDER BY g.end_time DESC NULLS LAST, pg.id DESC`,
+       ORDER BY g.end_time DESC NULLS LAST, pg.id DESC, ma.ply`,
       [WEBUI_USER_ID],
     ),
     pool.query<{ archive_games: number; archive_games_with_clock: number }>(
@@ -155,8 +149,11 @@ export async function getPlayerInsights(): Promise<PlayerInsights> {
     ),
   ]);
 
-  const games: GameAccumulator[] = moveResult.rows.map((row) => ({
-      id: Number(row.player_game_id),
+  const byGame = new Map<number, GameAccumulator>();
+  for (const row of moveResult.rows) {
+    const id = Number(row.player_game_id);
+    const game = byGame.get(id) ?? {
+      id,
       playedAt: row.played_at,
       timeClass: row.time_class ?? "unknown",
       timeControl: row.time_control,
@@ -164,17 +161,31 @@ export async function getPlayerInsights(): Promise<PlayerInsights> {
       result: row.result,
       opening: cleanOpening(row.opening),
       pgn: row.pgn,
-      moves: row.moves.map((move) => ({
-        ply: Number(move.ply),
-        moveNumber: Number(move.move_number),
-        classification: move.classification,
-        // Mate scores and forced-mate transitions use sentinel-sized values.
-        // Cap them to one severe error so they do not swamp human-scale CPL.
-        loss: Math.min(1_000, Math.max(0, Number(move.centipawn_loss ?? 0))),
-      })),
-    }));
+      moves: [],
+    };
+    game.moves.push({
+      ply: Number(row.ply),
+      moveNumber: Number(row.move_number),
+      san: row.san,
+      classification: row.classification,
+      loss: Math.min(1_000, Math.max(0, Number(row.centipawn_loss ?? 0))),
+    });
+    byGame.set(id, game);
+  }
+  const games = [...byGame.values()];
   const allMoves = games.flatMap((game) => game.moves);
   const gameAccuracies = games.map((game) => accuracyFromLosses(game.moves.map((move) => move.loss)));
+  const brilliancies = games.flatMap((game) => game.moves
+    .filter((move) => move.classification === "brilliant")
+    .map((move) => ({
+      gameId: game.id,
+      playedAt: game.playedAt,
+      moveNumber: move.moveNumber,
+      side: game.side,
+      san: move.san,
+      opening: game.opening,
+    })))
+    .slice(0, 12);
 
   const phase = (["Opening", "Middlegame", "Endgame"] as PhaseName[]).map((label) => {
     const matchingMoves = allMoves.filter((move) => phaseFor(move.moveNumber) === label);
@@ -277,6 +288,8 @@ export async function getPlayerInsights(): Promise<PlayerInsights> {
     averageAccuracy: roundedAverage(gameAccuracies),
     severeErrors: allMoves.filter((move) => isSevere(move.classification)).length,
     blunders: allMoves.filter((move) => move.classification === "blunder").length,
+    brilliantMoves: allMoves.filter((move) => move.classification === "brilliant").length,
+    brilliancies,
     phase,
     timeClasses,
     openings,

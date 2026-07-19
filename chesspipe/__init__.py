@@ -1,9 +1,9 @@
-"""chesspipe: a database-driven chess puzzle pipeline.
+"""OpenFile's local chess analysis pipeline.
 
 Stages (each independently runnable, DB state machine on player_games.status):
-    ingest -> select -> analyze -> generate -> send/solve
+    ingest -> select -> analyze -> generate -> solve
 """
 
 __all__ = ["__version__"]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

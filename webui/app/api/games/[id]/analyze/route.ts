@@ -13,9 +13,11 @@ function parseId(raw: string): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-function startWorker(playerGameId: number) {
+function startWorker(playerGameId: number, force = false) {
+  const args = ["-m", "chesspipe.cli", "analyze", "--player-game-id", String(playerGameId)];
+  if (force) args.push("--force");
   const worker = spawnDetachedChesspipe(
-    ["-m", "chesspipe.cli", "analyze", "--player-game-id", String(playerGameId)],
+    args,
     { TARGET_USER_ID: process.env.WEBUI_USER_ID ?? "1" },
   );
   worker.on("error", (error) => {
@@ -37,14 +39,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   return Response.json(state, { headers: { "Cache-Control": "no-store" } });
 }
 
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const id = parseId((await params).id);
   if (id == null) return Response.json({ error: "invalid_game_id" }, { status: 400 });
 
-  const result = await queueGameAnalysis(id);
+  const force = new URL(request.url).searchParams.get("force") === "1";
+  const result = await queueGameAnalysis(id, force);
   if (result === "missing") return Response.json({ error: "game_not_found" }, { status: 404 });
   if (result === "ready") return Response.json({ analyzed: true, status: "analyzed" });
-  if (result === "queued") startWorker(id);
+  if (result === "queued") startWorker(id, force);
 
   return Response.json({ analyzed: false, status: result === "running" ? "analyzing" : "selected" }, { status: 202 });
 }
