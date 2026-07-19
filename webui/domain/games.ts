@@ -18,7 +18,9 @@ export type GameCard = {
   opening: string | null;
   analyzed: boolean;
   analysis_depth: number | null;
+  accuracy: number | null;
   is_favorite: boolean;
+  collection_ids: number[];
 };
 
 export type GameListFilters = {
@@ -27,6 +29,23 @@ export type GameListFilters = {
   review: "all" | "reviewed" | "waiting";
   favorite: "all" | "favorites";
   syncRunId: number | null;
+  collectionId: number | null;
+  openingFamily: string | null;
+};
+
+export type GameCollection = {
+  id: number;
+  name: string;
+  description: string;
+  color: string;
+  game_count: number;
+  updated_at: string;
+};
+
+export type OpeningFamily = {
+  slug: string;
+  name: string;
+  count: number;
 };
 
 export type GamePage = {

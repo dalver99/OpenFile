@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { Chess } from "chess.js";
 import { useMemo, useState } from "react";
 import type { PuzzleCard } from "@/domain/puzzles";
+import PuzzleGenerator from "@/features/puzzles/PuzzleGenerator";
 
 // react-chessboard's drag-and-drop ids are intentionally client-generated.
 const Board = dynamic(() => import("@/components/chess/Board"), {
@@ -100,14 +101,7 @@ export default function PuzzleTrainer({ puzzles }: { puzzles: PuzzleCard[] }) {
   );
 
   if (!puzzles.length) {
-    return (
-      <div className="rounded-3xl border border-dashed border-stone-300 bg-white p-10 text-center shadow-sm dark:border-stone-700 dark:bg-stone-900">
-        <div className="text-4xl">♙</div>
-        <h2 className="mt-4 text-xl font-black text-stone-900 dark:text-stone-50">Your puzzle queue is empty</h2>
-        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-stone-500">Generate puzzles from analyzed games, then return here to practice the positions that actually occurred in your play.</p>
-        <code className="mt-4 inline-block rounded-lg bg-stone-100 px-3 py-2 font-mono text-xs text-stone-700 dark:bg-stone-800 dark:text-stone-300">./.venv/bin/python -m chesspipe.cli generate</code>
-      </div>
-    );
+    return <PuzzleGenerator />;
   }
 
   const activeIndex = Math.min(idx, Math.max(visiblePuzzles.length - 1, 0));

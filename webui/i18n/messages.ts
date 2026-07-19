@@ -1,7 +1,7 @@
 export const messages = {
   en: {
     brand: "OpenFile",
-    nav: { games: "Games", analysis: "Analysis", insights: "Insights", puzzles: "Puzzles", automation: "Schedule", automationShort: "Auto" },
+    nav: { games: "Games", engine: "Engine", collections: "Collections", analysis: "Analysis", insights: "Insights", puzzles: "Puzzles", automation: "Schedule", automationShort: "Auto" },
     games: {
       eyebrow: "Your chess archive",
       title: "Game Review",
@@ -62,7 +62,7 @@ export const messages = {
   },
   ko: {
     brand: "OpenFile",
-    nav: { games: "게임", analysis: "분석", insights: "인사이트", puzzles: "퍼즐", automation: "예약", automationShort: "예약" },
+    nav: { games: "게임", engine: "엔진", collections: "컬렉션", analysis: "분석", insights: "인사이트", puzzles: "퍼즐", automation: "예약", automationShort: "예약" },
     games: {
       eyebrow: "나의 체스 기록",
       title: "게임 리뷰",

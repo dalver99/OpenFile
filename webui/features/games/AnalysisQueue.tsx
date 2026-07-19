@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import type { GameCard } from "@/domain/games";
 
 type TimeFilter = "all" | "rapid" | "blitz" | "bullet";
-type FocusFilter = "recommended" | "losses" | "favorites" | "all";
+type FocusFilter = "recent" | "all" | "losses" | "favorites";
 type LiveStatus = { analyzed: boolean; status: string | null; detail: string | null };
 type AnalysisOperation = {
   status: "idle" | "running" | "complete" | "failed" | "cancelled";
@@ -63,7 +63,7 @@ export default function AnalysisQueue({
   const [activeId, setActiveId] = useState<number | null>(initialActive?.id ?? null);
   const [live, setLive] = useState<Record<number, LiveStatus>>({});
   const [time, setTime] = useState<TimeFilter>("all");
-  const [focus, setFocus] = useState<FocusFilter>("recommended");
+  const [focus, setFocus] = useState<FocusFilter>("recent");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [operation, setOperation] = useState<AnalysisOperation | null>(null);
   const [analysisOptions, setAnalysisOptions] = useState<AnalysisOptions>({
@@ -134,23 +134,20 @@ export default function AnalysisQueue({
   }, [activeId, router]);
 
   const filtered = useMemo(() => {
-    const recommended = candidates.filter((game) => game.is_favorite || outcome(game) === "loss");
-    const focused = focus === "recommended"
-      ? (recommended.length ? recommended : candidates)
-      : focus === "losses"
+    const focused = focus === "losses"
         ? candidates.filter((game) => outcome(game) === "loss")
         : focus === "favorites"
           ? candidates.filter((game) => game.is_favorite)
           : candidates;
-    return focused
+    const matching = focused
       .filter((game) => time === "all" || game.time_class === time)
-      .filter((game) => game.id !== activeId)
-      .slice(0, 8);
+      .filter((game) => game.id !== activeId);
+    return focus === "recent" ? matching.slice(0, 12) : matching;
   }, [activeId, candidates, focus, time]);
 
   const active = activeId === null ? null : candidates.find((game) => game.id === activeId) ?? null;
   const batchRunning = operation?.status === "running";
-  const queueUnavailable = batchRunning || activeId !== null;
+  const engineBusy = batchRunning || activeId !== null;
   const selectable = filtered.filter((game) => !["selected", "analyzing"].includes(game.status));
   const selectedGames = candidates.filter((game) => selected.has(game.id));
   const allVisibleSelected = selectable.length > 0 && selectable.every((game) => selected.has(game.id));
@@ -207,14 +204,14 @@ export default function AnalysisQueue({
   return (
     <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900">
       <details open className="group">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 marker:hidden [&::-webkit-details-marker]:hidden">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-4 marker:hidden [&::-webkit-details-marker]:hidden">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-700 dark:text-brand-400">Analysis queue</p>
             <h2 className="mt-0.5 text-base font-black text-stone-900 dark:text-stone-50">Choose games to review</h2>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-stone-500">{totalWaiting} waiting</span>
-            <span className="grid h-7 w-7 place-items-center rounded-lg bg-stone-100 text-stone-500 transition group-open:rotate-180 dark:bg-stone-800">⌄</span>
+            <span className="flex h-8 w-8 origin-center items-center justify-center rounded-lg bg-stone-100 text-base leading-none text-stone-500 transition-transform group-open:rotate-180 dark:bg-stone-800" aria-hidden="true">⌄</span>
           </div>
         </summary>
 
@@ -230,22 +227,21 @@ export default function AnalysisQueue({
               <option value="bullet">Bullet</option>
             </select>
           </label>
-          <label className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">Focus
+          <label className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">Show
             <select value={focus} onChange={(event) => setFocus(event.target.value as FocusFilter)} className="mt-1 w-full rounded-lg border border-stone-200 bg-stone-50 px-2.5 py-2 text-xs font-semibold text-stone-700 outline-none focus:border-brand-400 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
-              <option value="recommended">Recommended</option>
+              <option value="recent">Recent</option>
+              <option value="all">All waiting</option>
               <option value="losses">Losses</option>
               <option value="favorites">Favorites</option>
-              <option value="all">Everything</option>
             </select>
           </label>
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2.5 dark:border-stone-700 dark:bg-stone-800/70">
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-stone-600 dark:text-stone-300">
-            <input type="checkbox" checked={allVisibleSelected} onChange={toggleVisible} disabled={!selectable.length || queueUnavailable} className="h-4 w-4 accent-brand-700" />
-            Select visible
-          </label>
-          <button type="button" onClick={analyzeSelected} disabled={!selectedGames.length || queueUnavailable} className="rounded-lg bg-brand-700 px-3 py-2 text-xs font-black text-white transition hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-stone-300 dark:disabled:bg-stone-700">
+          <button type="button" onClick={toggleVisible} disabled={!selectable.length} aria-pressed={allVisibleSelected} className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-bold text-stone-600 transition hover:border-brand-400 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300">
+            {allVisibleSelected ? "Clear visible" : `Select visible (${selectable.length})`}
+          </button>
+          <button type="button" onClick={analyzeSelected} disabled={!selectedGames.length || engineBusy} className="rounded-lg bg-brand-700 px-3 py-2 text-xs font-black text-white transition hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-stone-300 dark:disabled:bg-stone-700">
             {batchRunning ? "Analysis running…" : `Analyze ${selectedGames.length || "selected"}`}
           </button>
         </div>
@@ -254,27 +250,27 @@ export default function AnalysisQueue({
           <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-stone-500">Analysis settings</summary>
           <div className="grid grid-cols-2 gap-2 border-t border-stone-100 p-3 dark:border-stone-800">
             <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">First pass depth
-              <select value={analysisOptions.depth} onChange={(event) => setAnalysisOptions((current) => ({ ...current, depth: Number(event.target.value), deepDepth: Math.max(current.deepDepth, Number(event.target.value)) }))} disabled={queueUnavailable} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
+              <select value={analysisOptions.depth} onChange={(event) => setAnalysisOptions((current) => ({ ...current, depth: Number(event.target.value), deepDepth: Math.max(current.deepDepth, Number(event.target.value)) }))} disabled={engineBusy} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
                 {[8, 10, 12, 14, 16, 18, 20, 22, 24].map((value) => <option key={value}>{value}</option>)}
               </select>
             </label>
             <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">Candidate lines
-              <select value={analysisOptions.multipv} onChange={(event) => setAnalysisOptions((current) => ({ ...current, multipv: Number(event.target.value) }))} disabled={queueUnavailable} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
+              <select value={analysisOptions.multipv} onChange={(event) => setAnalysisOptions((current) => ({ ...current, multipv: Number(event.target.value) }))} disabled={engineBusy} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
                 {[1, 2, 3, 4, 5].map((value) => <option key={value}>{value}</option>)}
               </select>
             </label>
             <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">Critical depth
-              <select value={analysisOptions.deepDepth} onChange={(event) => setAnalysisOptions((current) => ({ ...current, deepDepth: Number(event.target.value) }))} disabled={queueUnavailable} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
+              <select value={analysisOptions.deepDepth} onChange={(event) => setAnalysisOptions((current) => ({ ...current, deepDepth: Number(event.target.value) }))} disabled={engineBusy} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
                 {[10, 12, 14, 16, 18, 20, 22, 24, 26].filter((value) => value >= analysisOptions.depth).map((value) => <option key={value}>{value}</option>)}
               </select>
             </label>
             <label className="text-[10px] font-semibold uppercase tracking-wide text-stone-400">Critical lines
-              <select value={analysisOptions.deepMultipv} onChange={(event) => setAnalysisOptions((current) => ({ ...current, deepMultipv: Number(event.target.value) }))} disabled={queueUnavailable} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
+              <select value={analysisOptions.deepMultipv} onChange={(event) => setAnalysisOptions((current) => ({ ...current, deepMultipv: Number(event.target.value) }))} disabled={engineBusy} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
                 {[1, 2, 3, 4, 5].map((value) => <option key={value}>{value}</option>)}
               </select>
             </label>
             <label className="col-span-2 text-[10px] font-semibold uppercase tracking-wide text-stone-400">Maximum critical positions
-              <select value={analysisOptions.deepMaxMoves} onChange={(event) => setAnalysisOptions((current) => ({ ...current, deepMaxMoves: Number(event.target.value) }))} disabled={queueUnavailable} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
+              <select value={analysisOptions.deepMaxMoves} onChange={(event) => setAnalysisOptions((current) => ({ ...current, deepMaxMoves: Number(event.target.value) }))} disabled={engineBusy} className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
                 {[...new Set([0, 6, 12, 18, 24, 30, analysisOptions.deepMaxMoves])]
                   .sort((left, right) => left - right)
                   .map((value) => <option key={value} value={value}>{value === 0 ? "Off" : value}</option>)}
@@ -306,7 +302,11 @@ export default function AnalysisQueue({
             <Link href={`/games/${active.id}`} target="_blank" rel="noopener noreferrer" className="shrink-0 rounded-lg border border-brand-200 bg-white px-3 py-2 text-xs font-bold text-brand-800 hover:border-brand-400 dark:border-brand-900 dark:bg-stone-900 dark:text-brand-300">Open status</Link>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="border-y border-stone-100 bg-stone-50/70 px-4 py-3 dark:border-stone-800 dark:bg-stone-800/35">
+          <p className="flex items-center gap-2 text-xs font-semibold text-stone-500"><span className="h-2 w-2 rounded-full bg-emerald-500" />Engine idle · select games to begin</p>
+        </div>
+      )}
 
       <div className="divide-y divide-stone-100 dark:divide-stone-800">
         {filtered.length ? filtered.map((game) => {
@@ -315,8 +315,8 @@ export default function AnalysisQueue({
           return (
             <article key={game.id} className="p-4">
               <div className="flex items-center justify-between gap-3">
-                <label className={`flex min-w-0 flex-1 items-center gap-3 ${unavailable || queueUnavailable ? "cursor-default" : "cursor-pointer"}`}>
-                  <input type="checkbox" checked={selected.has(game.id)} onChange={() => toggle(game.id)} disabled={unavailable || queueUnavailable} className="h-4 w-4 shrink-0 accent-brand-700" aria-label={`Select game against ${opponent(game)}`} />
+                <label className={`flex min-w-0 flex-1 items-center gap-3 ${unavailable ? "cursor-default" : "cursor-pointer"}`}>
+                  <input type="checkbox" checked={selected.has(game.id)} onChange={() => toggle(game.id)} disabled={unavailable} className="h-4 w-4 shrink-0 accent-brand-700" aria-label={`Select game against ${opponent(game)}`} />
                   <span className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className={`h-2 w-2 shrink-0 rounded-full ${result === "win" ? "bg-emerald-500" : result === "loss" ? "bg-rose-500" : "bg-stone-400"}`} />

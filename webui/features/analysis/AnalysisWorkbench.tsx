@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatEvaluation } from "@/lib/review";
 import EvaluationBar from "@/components/chess/EvaluationBar";
 import { lichessAnalysisUrl } from "@/lib/lichess";
+import PositionEditor from "@/features/analysis/PositionEditor";
 
 const Board = dynamic(() => import("@/components/chess/Board"), {
   ssr: false,
@@ -201,6 +202,7 @@ export default function AnalysisWorkbench({
   const [fenInput, setFenInput] = useState(startingFrames[startingCursor].fen);
   const [pgnInput, setPgnInput] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
   const requestId = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const notationRef = useRef<HTMLDivElement>(null);
@@ -391,6 +393,18 @@ export default function AnalysisWorkbench({
     setLoadError(null);
   }
 
+  function useEditedPosition(fen: string) {
+    const loaded = nodesFromFrames([{ fen, uci: null, san: null, label: "Edited position" }]);
+    setNodes(loaded);
+    setCursorId(loaded[0].id);
+    nextNodeId.current = loaded.length;
+    setFenInput(fen);
+    setResult(null);
+    setError(null);
+    setLoadError(null);
+    setEditorOpen(false);
+  }
+
   return (
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(640px,1.35fr)_minmax(400px,0.65fr)] 2xl:grid-cols-[minmax(760px,1.45fr)_minmax(430px,0.55fr)]">
       <section className="xl:sticky xl:top-20">
@@ -398,6 +412,7 @@ export default function AnalysisWorkbench({
           <div className="mb-2 flex items-center justify-between rounded-xl border border-stone-200 bg-white px-3 py-2.5 shadow-sm dark:border-stone-700 dark:bg-stone-900">
             <div><p className="text-sm font-black text-stone-900 dark:text-stone-50">{sideToMove === "white" ? "White" : "Black"} to move</p><p className="text-[11px] text-stone-400">Ply {cursor} · {nodes.length - 1} moves in tree</p></div>
             <div className="flex gap-1.5">
+              <button type="button" onClick={() => setEditorOpen(true)} className="rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-bold text-brand-700 hover:border-brand-500 dark:border-brand-900 dark:bg-brand-950/40 dark:text-brand-300" title="Place pieces and choose the side to move">✎ Edit position</button>
               <a href={lichessHref} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-600 hover:border-brand-400 hover:text-brand-700 dark:border-stone-700 dark:text-stone-300" title="Open this exact position in Lichess">Lichess ↗</a>
               <button type="button" onClick={() => { setOrientation((value) => value === "white" ? "black" : "white"); }} className="rounded-lg border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-600 hover:border-brand-400 dark:border-stone-700 dark:text-stone-300" title="Flip board">↻ Flip</button>
               <button type="button" onClick={resetBoard} className="rounded-lg border border-stone-200 px-2.5 py-1.5 text-xs font-bold text-stone-600 hover:border-rose-400 dark:border-stone-700 dark:text-stone-300">Reset</button>
@@ -486,6 +501,7 @@ export default function AnalysisWorkbench({
           </details>
         </div>
       </aside>
+      {editorOpen ? <PositionEditor initialFen={currentFen} orientation={orientation} onCancel={() => setEditorOpen(false)} onApply={useEditedPosition} /> : null}
     </div>
   );
 }

@@ -17,7 +17,7 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Action = "ingest" | "analyze";
+type Action = "ingest" | "analyze" | "generate";
 type Operation = {
   action: Action;
   status: "idle" | "running" | "complete" | "failed" | "cancelled";
@@ -41,10 +41,12 @@ declare global {
 const initialOperations: Record<Action, Operation> = {
   ingest: { action: "ingest", status: "idle", message: "Ready to sync", output: "", startedAt: null, finishedAt: null },
   analyze: { action: "analyze", status: "idle", message: "Ready to analyze", output: "", startedAt: null, finishedAt: null },
+  generate: { action: "generate", status: "idle", message: "Ready to generate puzzles", output: "", startedAt: null, finishedAt: null },
 };
 
 const operations = global._openFileOperations ?? initialOperations;
 const processes = global._openFileOperationProcesses ?? {};
+operations.generate ??= initialOperations.generate;
 global._openFileOperations = operations;
 global._openFileOperationProcesses = processes;
 
@@ -131,6 +133,77 @@ function startAnalysis(
     failed: 0,
   };
   runAnalyzeStep(steps, 0, playerGameIds?.length ? 0 : 1, analysisEnvironment);
+}
+
+function runGenerateStep(total: number, index = 0) {
+  const child = spawnChesspipe(["-m", "chesspipe.cli", "generate"], {
+    TARGET_USER_ID: process.env.WEBUI_USER_ID ?? "1",
+  });
+  let stepOutput = "";
+  processes.generate = child;
+  child.stdout.on("data", (chunk: Buffer) => {
+    stepOutput += chunk.toString();
+    appendOutput("generate", chunk.toString());
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stepOutput += chunk.toString();
+    appendOutput("generate", chunk.toString());
+  });
+  child.on("error", (error) => {
+    operations.generate = {
+      ...operations.generate,
+      status: "failed",
+      message: `Could not start puzzle generation: ${error.message}`,
+      finishedAt: new Date().toISOString(),
+    };
+  });
+  child.on("close", (code) => {
+    delete processes.generate;
+    if (code !== 0) operations.generate.failed = (operations.generate.failed ?? 0) + 1;
+    const noEligibleGame = code === 0 && /["']status["']\s*:\s*["']idle["']/.test(stepOutput);
+    if (noEligibleGame) {
+      operations.generate.completed = index;
+      operations.generate = {
+        ...operations.generate,
+        status: "complete",
+        message: index
+          ? `Checked ${index} analyzed ${index === 1 ? "game" : "games"}; no more are waiting.`
+          : "No analyzed games are waiting. Review games in Engine first.",
+        finishedAt: new Date().toISOString(),
+      };
+      return;
+    }
+    operations.generate.completed = index + 1;
+    if (index + 1 < total && code === 0) {
+      operations.generate.message = `Checking analyzed game ${index + 2} of ${total}…`;
+      runGenerateStep(total, index + 1);
+      return;
+    }
+    const failed = operations.generate.failed ?? 0;
+    operations.generate = {
+      ...operations.generate,
+      status: failed ? "failed" : "complete",
+      message: failed
+        ? `Puzzle generation stopped after ${index + 1} ${index === 0 ? "game" : "games"}.`
+        : `Checked ${total} analyzed ${total === 1 ? "game" : "games"} for training positions.`,
+      finishedAt: new Date().toISOString(),
+    };
+  });
+}
+
+function startPuzzleGeneration(total: number) {
+  operations.generate = {
+    action: "generate",
+    status: "running",
+    message: `Checking analyzed game 1 of ${total}…`,
+    output: "",
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    total,
+    completed: 0,
+    failed: 0,
+  };
+  runGenerateStep(total);
 }
 
 async function startSync(options: {
@@ -231,14 +304,23 @@ export async function POST(request: Request) {
     refreshExisting?: unknown;
     gameIds?: unknown;
     analysisOptions?: unknown;
+    count?: unknown;
   };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: "invalid_json" }, { status: 400 });
   }
-  if (body.action !== "ingest" && body.action !== "analyze") {
+  if (body.action !== "ingest" && body.action !== "analyze" && body.action !== "generate") {
     return Response.json({ error: "invalid_action" }, { status: 400 });
+  }
+  if (body.action === "generate") {
+    if (operations.generate.status === "running") {
+      return Response.json({ operation: operations.generate }, { status: 409 });
+    }
+    const count = boundedInteger(body.count, 3, 1, 10);
+    startPuzzleGeneration(count);
+    return Response.json({ operation: operations.generate }, { status: 202 });
   }
   if (body.action === "analyze") {
     if (operations.analyze.status === "running") {

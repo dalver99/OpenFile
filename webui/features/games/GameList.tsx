@@ -1,7 +1,8 @@
 import Link from "next/link";
-import type { GameCard, GameListFilters, GamePage } from "@/domain/games";
+import type { GameCard, GameCollection, GameListFilters, GamePage, OpeningFamily } from "@/domain/games";
 import type { messages } from "@/i18n/messages";
 import FavoriteButton from "@/features/games/FavoriteButton";
+import CollectionMenu from "@/features/games/CollectionMenu";
 
 type GameText = typeof messages.en.games | typeof messages.ko.games;
 
@@ -43,12 +44,28 @@ function gamesHref(
   params.set("review", next.review);
   if (next.favorite === "favorites") params.set("favorite", "favorites");
   if (next.syncRunId !== null) params.set("sync", String(next.syncRunId));
+  if (next.collectionId !== null) params.set("collection", String(next.collectionId));
+  if (next.openingFamily) params.set("opening", next.openingFamily);
   if (changes.page && changes.page > 1) params.set("page", String(changes.page));
   return `/games?${params.toString()}`;
 }
 
-export default function GameList({ data, filters, text }: { data: GamePage; filters: GameListFilters; text: GameText }) {
+export default function GameList({
+  data,
+  filters,
+  text,
+  collections,
+  openingFamilies,
+}: {
+  data: GamePage;
+  filters: GameListFilters;
+  text: GameText;
+  collections: GameCollection[];
+  openingFamilies: OpeningFamily[];
+}) {
   const games = data.games;
+  const activeCollection = collections.find((collection) => collection.id === filters.collectionId) ?? null;
+  const activeOpening = openingFamilies.find((opening) => opening.slug === filters.openingFamily) ?? null;
 
   return (
     <div className="space-y-5">
@@ -61,6 +78,12 @@ export default function GameList({ data, filters, text }: { data: GamePage; filt
           >
             Show the full archive
           </Link>
+        </div>
+      ) : null}
+      {activeCollection || activeOpening ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900 dark:border-violet-900 dark:bg-violet-950/30 dark:text-violet-100">
+          <span>Showing {activeCollection ? `collection “${activeCollection.name}”` : `opening family “${activeOpening?.name}”`}</span>
+          <Link href={gamesHref(filters, activeCollection ? { collectionId: null } : { openingFamily: null })} className="font-bold hover:underline">Clear filter</Link>
         </div>
       ) : null}
       <div className="space-y-3 rounded-2xl border border-stone-200 bg-white p-3 shadow-sm dark:border-stone-700 dark:bg-stone-900">
@@ -79,6 +102,8 @@ export default function GameList({ data, filters, text }: { data: GamePage; filt
             <input type="hidden" name="review" value={filters.review} />
             <input type="hidden" name="favorite" value={filters.favorite} />
             {filters.syncRunId !== null ? <input type="hidden" name="sync" value={filters.syncRunId} /> : null}
+            {filters.collectionId !== null ? <input type="hidden" name="collection" value={filters.collectionId} /> : null}
+            {filters.openingFamily ? <input type="hidden" name="opening" value={filters.openingFamily} /> : null}
             {filters.query ? (
               <Link
                 href={gamesHref(filters, { query: "" })}
@@ -141,6 +166,25 @@ export default function GameList({ data, filters, text }: { data: GamePage; filt
             ))}
           </div>
         </div>
+        <div className="border-t border-stone-100 pt-3 dark:border-stone-800">
+          <div className="flex items-center justify-between gap-3">
+            <div><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-stone-400">Browse by opening family</p><p className="mt-0.5 text-[11px] text-stone-500">Variations are grouped under their parent opening.</p></div>
+            {filters.openingFamily ? <Link href={gamesHref(filters, { openingFamily: null })} className="text-xs font-bold text-brand-700 hover:underline dark:text-brand-400">All openings</Link> : null}
+          </div>
+          <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
+            {openingFamilies.slice(0, 10).map((opening) => (
+              <Link key={opening.slug} href={gamesHref(filters, { openingFamily: opening.slug })} className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold transition ${filters.openingFamily === opening.slug ? "border-brand-700 bg-brand-700 text-white" : "border-stone-200 bg-white text-stone-600 hover:border-brand-400 hover:text-brand-700 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300"}`}>
+                {opening.name} <span className="opacity-60">{opening.count}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto border-t border-stone-100 pt-3 dark:border-stone-800">
+          <Link href="/collections" className="shrink-0 text-[10px] font-bold uppercase tracking-[0.16em] text-stone-400 hover:text-brand-700">Collections →</Link>
+          {collections.slice(0, 6).map((collection) => (
+            <Link key={collection.id} href={gamesHref(filters, { collectionId: collection.id })} className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold ${filters.collectionId === collection.id ? "border-stone-900 bg-stone-900 text-white dark:border-white dark:bg-white dark:text-stone-900" : "border-stone-200 text-stone-600 dark:border-stone-700 dark:text-stone-300"}`}><i className="h-2 w-2 rounded-full" style={{ backgroundColor: collection.color }} />{collection.name}</Link>
+          ))}
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900">
@@ -157,7 +201,7 @@ export default function GameList({ data, filters, text }: { data: GamePage; filt
                 href={`/games/${game.id}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="grid gap-4 px-4 py-4 pr-16 sm:grid-cols-[1fr_auto_auto] sm:items-center sm:px-6 sm:pr-20"
+                className="grid gap-4 px-4 py-4 pr-28 sm:grid-cols-[1fr_auto_auto] sm:items-center sm:px-6 sm:pr-32"
               >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -174,14 +218,15 @@ export default function GameList({ data, filters, text }: { data: GamePage; filt
                 <span>{game.played_at ?? "Unknown date"}</span>
               </div>
               <div className="flex items-center justify-between gap-3 sm:justify-end">
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${game.analyzed ? "bg-brand-100 text-brand-700" : game.status === "analyzing" ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${game.analyzed ? "bg-brand-100 text-brand-700 dark:bg-brand-950/60 dark:text-brand-300" : game.status === "analyzing" ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`} title={game.analyzed ? "Your OpenFile accuracy for this game" : undefined}>
                   <i className="h-1.5 w-1.5 rounded-full bg-current" />
-                  {game.analyzed ? "Review ready" : game.status === "analyzing" ? "Analyzing" : "Analyze →"}
+                  {game.analyzed ? <><strong className="font-black">{game.accuracy ?? 100}</strong> accuracy</> : game.status === "analyzing" ? "Analyzing" : "Analyze →"}
                 </span>
                 {game.analyzed || game.status === "analyzing" ? <span className="text-lg text-stone-300 transition group-hover:translate-x-1 group-hover:text-brand-600">→</span> : null}
               </div>
               </Link>
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 sm:right-5">
+              <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-1.5 sm:right-5">
+                <CollectionMenu gameId={game.id} collections={collections} initialCollectionIds={game.collection_ids} />
                 <FavoriteButton gameId={game.id} initialFavorite={game.is_favorite} />
               </div>
             </article>

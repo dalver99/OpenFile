@@ -17,6 +17,9 @@ type LocalConfig = {
   analysis_deep_depth?: number;
   analysis_deep_multipv?: number;
   analysis_deep_max_moves?: number;
+  stockfish_path?: string;
+  stockfish_threads?: number;
+  stockfish_hash_mb?: number;
 };
 
 function defaultConfigPath(): string {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Chess } from "chess.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  GameCollection,
   GameReview as GameReviewData,
   ReviewMove,
   ReviewSideline,
@@ -23,6 +24,7 @@ import EvaluationBar from "@/components/chess/EvaluationBar";
 import EvaluationGraph from "@/components/chess/EvaluationGraph";
 import { lichessAnalysisUrl } from "@/lib/lichess";
 import FavoriteButton from "@/features/games/FavoriteButton";
+import CollectionMenu from "@/features/games/CollectionMenu";
 
 const Board = dynamic(() => import("@/components/chess/Board"), {
   ssr: false,
@@ -261,7 +263,7 @@ function PlayerStrip({
   );
 }
 
-export default function GameReview({ review }: { review: GameReviewData }) {
+export default function GameReview({ review, collections }: { review: GameReviewData; collections: GameCollection[] }) {
   const [selectedIndex, setSelectedIndex] = useState(review.moves.length ? 1 : 0);
   const [savedSidelines, setSavedSidelines] = useState(review.sidelines);
   const [activeSideline, setActiveSideline] = useState<ActiveSideline | null>(null);
@@ -904,7 +906,7 @@ export default function GameReview({ review }: { review: GameReviewData }) {
         </div>
 
         <aside className="relative flex min-h-[760px] flex-col overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900 xl:h-[calc(100vh-8.25rem)] xl:min-h-0">
-          <div className="h-[190px] shrink-0 overflow-y-auto border-b border-stone-100 p-5 dark:border-stone-800">
+          <div className="h-[238px] shrink-0 overflow-y-auto border-b border-stone-100 p-5 dark:border-stone-800">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <p className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-brand-700">
@@ -955,35 +957,6 @@ export default function GameReview({ review }: { review: GameReviewData }) {
                         : "Saved"}
                   </span>
                 ) : null}
-                <Link
-                  href={analysisHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  prefetch={false}
-                  className="rounded-lg bg-stone-800 px-3 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-stone-700 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white"
-                  title="Open this exact position in the local Stockfish analysis board"
-                >
-                  Analysis ↗
-                </Link>
-                <FavoriteButton gameId={game.id} initialFavorite={game.is_favorite} showLabel />
-                <a
-                  href={game.chesscom_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-600 shadow-sm transition hover:border-stone-400 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
-                  title="Open the original game on Chess.com"
-                >
-                  Chess.com ↗
-                </a>
-                <a
-                  href={lichessHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-600 shadow-sm transition hover:border-brand-400 hover:text-brand-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
-                  title="Open the position currently on this board in Lichess"
-                >
-                  Lichess ↗
-                </a>
               </div>
             </div>
             <p className="mt-3 text-sm leading-6 text-stone-600 dark:text-stone-300">
@@ -1049,6 +1022,17 @@ export default function GameReview({ review }: { review: GameReviewData }) {
                 Return to recorded game
               </button>
             ) : null}
+            <div className="mt-3 flex flex-col gap-2 border-t border-stone-100 pt-3 dark:border-stone-800 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <FavoriteButton gameId={game.id} initialFavorite={game.is_favorite} showLabel />
+                <CollectionMenu gameId={game.id} collections={collections} initialCollectionIds={game.collection_ids} showLabel />
+                <Link href={analysisHref} target="_blank" rel="noopener noreferrer" prefetch={false} className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-bold text-stone-700 shadow-sm transition hover:border-brand-400 hover:text-brand-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200" title="Open this exact position in the local Stockfish analysis board">Analysis ↗</Link>
+              </div>
+              <div className="flex items-center gap-2">
+                <a href={game.chesscom_url} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-600 shadow-sm transition hover:border-stone-400 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200" title="Open the original game on Chess.com">Chess.com ↗</a>
+                <a href={lichessHref} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-xs font-bold text-stone-600 shadow-sm transition hover:border-brand-400 hover:text-brand-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200" title="Open the position currently on this board in Lichess">Lichess ↗</a>
+              </div>
+            </div>
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col">

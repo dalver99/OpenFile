@@ -6,11 +6,13 @@ import type {
   GameListFilters,
   GamePage,
   GameReview,
+  OpeningFamily,
   ReviewMove,
   ReviewSideline,
 } from "@/domain/games";
 import { pool } from "@/server/database/sqlite";
 import { WEBUI_USER_ID } from "@/server/current-user";
+import { openingFamilyFromEcoUrl, openingNameFromEcoUrl } from "@/lib/openings";
 
 const gameColumns = `
          pg.id, g.white_username, g.black_username,
@@ -18,17 +20,32 @@ const gameColumns = `
          substr(g.end_time, 1, 10) AS played_at,
          g.time_class, g.time_control, pg.side, pg.result, pg.rating_after,
          pg.status, pg.status_detail,
-         CASE WHEN g.eco_url IS NULL THEN NULL
-              WHEN instr(g.eco_url, '/openings/') > 0
-              THEN replace(substr(g.eco_url, instr(g.eco_url, '/openings/') + 10), '-', ' ')
-              ELSE g.eco_url
-         END AS opening,
+         g.eco_url AS opening_url,
          (ga.id IS NOT NULL) AS analyzed,
          ga.depth AS analysis_depth,
+         (
+           SELECT avg(
+             CASE
+               WHEN ma.centipawn_loss < 0 THEN 0
+               WHEN ma.centipawn_loss > 1000 THEN 1000
+               ELSE ma.centipawn_loss
+             END
+           )
+           FROM move_analyses ma
+           WHERE ma.game_analysis_id = ga.id
+             AND ma.side = pg.side
+             AND ma.centipawn_loss IS NOT NULL
+         ) AS player_average_centipawn_loss,
          EXISTS (
            SELECT 1 FROM favorite_games fg
            WHERE fg.player_game_id = pg.id AND fg.user_id = pg.player_id
-         ) AS is_favorite`;
+         ) AS is_favorite,
+         COALESCE((
+           SELECT group_concat(cg.collection_id)
+           FROM collection_games cg
+           JOIN game_collections c ON c.id = cg.collection_id
+           WHERE cg.player_game_id = pg.id AND c.user_id = pg.player_id
+         ), '') AS collection_ids`;
 
 const gameFrom = `
   FROM player_games pg
@@ -43,6 +60,30 @@ function clockSeconds(value: string): number | null {
 
 function pgnClocks(pgn: string): Array<number | null> {
   return [...pgn.matchAll(/\[%clk\s+([^\]]+)\]/g)].map((match) => clockSeconds(match[1]));
+}
+
+function collectionIds(value: unknown): number[] {
+  return String(value ?? "")
+    .split(",")
+    .map(Number)
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+}
+
+function gameCardRow(row: Record<string, unknown>): GameCard {
+  const analyzed = Boolean(row.analyzed);
+  const averageLoss = row.player_average_centipawn_loss == null
+    ? null
+    : Number(row.player_average_centipawn_loss);
+  return {
+    ...row,
+    analyzed,
+    accuracy: analyzed
+      ? Math.max(1, Math.round(100 * Math.exp(-(averageLoss ?? 0) / 250)))
+      : null,
+    is_favorite: Boolean(row.is_favorite),
+    opening: openingNameFromEcoUrl(row.opening_url ? String(row.opening_url) : null),
+    collection_ids: collectionIds(row.collection_ids),
+  } as GameCard;
 }
 
 export async function listGames(
@@ -64,6 +105,26 @@ export async function listGames(
       SELECT 1 FROM favorite_games fg
       WHERE fg.player_game_id = pg.id AND fg.user_id = pg.player_id
     )`);
+  }
+  if (filters.collectionId !== null) {
+    params.push(filters.collectionId);
+    conditions.push(`EXISTS (
+      SELECT 1 FROM collection_games cg
+      JOIN game_collections c ON c.id = cg.collection_id
+      WHERE cg.player_game_id = pg.id
+        AND cg.collection_id = $${params.length}
+        AND c.user_id = pg.player_id
+    )`);
+  }
+  if (filters.openingFamily) {
+    const aliases = filters.openingFamily === "italian-game"
+      ? ["italian-game", "giuoco-piano-game"]
+      : [filters.openingFamily];
+    const openingConditions = aliases.map((alias) => {
+      params.push(`%${alias}%`);
+      return `lower(COALESCE(g.eco_url, '')) LIKE $${params.length}`;
+    });
+    conditions.push(`(${openingConditions.join(" OR ")})`);
   }
   if (filters.syncRunId !== null) {
     params.push(filters.syncRunId);
@@ -105,11 +166,7 @@ export async function listGames(
     listParams,
   );
   return {
-    games: rows.map((row) => ({
-      ...row,
-      analyzed: Boolean(row.analyzed),
-      is_favorite: Boolean(row.is_favorite),
-    })) as GameCard[],
+    games: rows.map(gameCardRow),
     total,
     page,
     pageSize,
@@ -147,24 +204,35 @@ export async function listAnalysisCandidates(requestedLimit = 80): Promise<GameC
        AND ga.id IS NULL
      ORDER BY
        CASE WHEN pg.status IN ('selected', 'analyzing') THEN 0 ELSE 1 END,
-       CASE WHEN EXISTS (
-         SELECT 1 FROM favorite_games fg
-         WHERE fg.player_game_id = pg.id AND fg.user_id = pg.player_id
-       ) THEN 0 ELSE 1 END,
-       CASE WHEN pg.result NOT IN (
-         'win', 'agreed', 'stalemate', 'repetition', 'insufficient',
-         '50move', 'timevsinsufficient'
-       ) THEN 0 ELSE 1 END,
        g.end_time DESC,
        pg.id DESC
      LIMIT $2`,
     [WEBUI_USER_ID, limit],
   );
-  return rows.map((row) => ({
-    ...row,
-    analyzed: false,
-    is_favorite: Boolean(row.is_favorite),
-  })) as GameCard[];
+  return rows.map(gameCardRow);
+}
+
+export async function listOpeningFamilies(): Promise<OpeningFamily[]> {
+  const { rows } = await pool.query<{ eco_url: string; game_count: number }>(
+    `SELECT g.eco_url, count(*)::int AS game_count
+     FROM player_games pg
+     JOIN chesscom_games g ON g.id = pg.game_id
+     WHERE pg.player_id = $1 AND g.rules = 'chess' AND g.eco_url IS NOT NULL
+     GROUP BY g.eco_url`,
+    [WEBUI_USER_ID],
+  );
+  const families = new Map<string, OpeningFamily>();
+  for (const row of rows) {
+    const family = openingFamilyFromEcoUrl(row.eco_url);
+    if (!family) continue;
+    const current = families.get(family.slug);
+    families.set(family.slug, {
+      ...family,
+      count: (current?.count ?? 0) + Number(row.game_count),
+    });
+  }
+  return [...families.values()].sort((left, right) =>
+    right.count - left.count || left.name.localeCompare(right.name));
 }
 
 export async function getGameReview(playerGameId: number): Promise<GameReview | null> {
@@ -179,11 +247,7 @@ export async function getGameReview(playerGameId: number): Promise<GameReview | 
 
   const { pgn, ...gameRow } = rows[0];
   const clocks = pgnClocks(String(pgn ?? ""));
-  const game = {
-    ...gameRow,
-    analyzed: Boolean(rows[0].analyzed),
-    is_favorite: Boolean(rows[0].is_favorite),
-  } as GameReview["game"];
+  const game = gameCardRow(gameRow) as GameReview["game"];
   if (!game.analyzed) return { game, moves: [], sidelines: [] };
 
   const moveResult = await pool.query(

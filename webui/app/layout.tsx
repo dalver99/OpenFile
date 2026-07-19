@@ -59,6 +59,8 @@ export default function RootLayout({
             </Link>
             <nav className="flex items-center gap-0.5 rounded-xl bg-white/80 p-1 text-xs shadow-sm ring-1 ring-stone-200 dark:bg-stone-900/80 dark:ring-stone-700 sm:gap-1 sm:text-sm" aria-label="Primary navigation">
               <Link href="/games" className="rounded-lg px-1.5 py-1.5 font-medium text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white sm:px-3">{text.nav.games}</Link>
+              <Link href="/engine" className="rounded-lg px-1.5 py-1.5 font-medium text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white sm:px-3">{text.nav.engine}</Link>
+              <Link href="/collections" className="hidden rounded-lg px-1.5 py-1.5 font-medium text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white md:block sm:px-3">{text.nav.collections}</Link>
               <Link href="/analysis" className="rounded-lg px-1.5 py-1.5 font-medium text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white sm:px-3">{text.nav.analysis}</Link>
               <Link href="/insights" className="rounded-lg px-1.5 py-1.5 font-medium text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white sm:px-3">{text.nav.insights}</Link>
               <Link href="/puzzles" className="rounded-lg px-1.5 py-1.5 font-medium text-stone-600 hover:bg-stone-100 hover:text-stone-900 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-white sm:px-3">{text.nav.puzzles}</Link>
