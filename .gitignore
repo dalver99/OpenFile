@@ -1,4 +1,35 @@
+# Secrets / local config
 .env
+**/.env
+**/token.txt
+.vscode/
+.rookline/
+.openfile/
+/automation/
+rookline.config.json
+openfile.config.json
+*.local.json
+
+# Data & virtualenvs
 data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+venv/
+.venv/
+**/.venv/
+
+# Python
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
+
+# Generated local puzzle previews
+puzzles*.html
+
+# OS
+.DS_Store

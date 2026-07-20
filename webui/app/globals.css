@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #f7f6f2;
+  --foreground: #1c1917;
+  --brand: #a12222;
+}
+
+.dark {
+  --background: #151412;
+  --foreground: #f5f5f4;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-brand-50: #fff5f5;
+  --color-brand-100: #fde8e8;
+  --color-brand-200: #f8caca;
+  --color-brand-300: #ee9b9b;
+  --color-brand-400: #df6666;
+  --color-brand-500: #c93e3e;
+  --color-brand-600: #b52a2a;
+  --color-brand-700: #a12222;
+  --color-brand-800: #7f1c1c;
+  --color-brand-900: #681b1b;
+  --color-brand-950: #380a0a;
+  --font-sans: "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+html,
+body {
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+@keyframes review-progress {
+  0% { transform: translateX(-110%); }
+  50% { transform: translateX(80%); }
+  100% { transform: translateX(260%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

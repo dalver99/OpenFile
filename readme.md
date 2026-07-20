@@ -1,72 +1,141 @@
-## Daily Chess.com analysis (PostgreSQL + Stockfish)
+# OpenFile
 
-The worker loads the target user from `public.users` (by `TARGET_USER_ID`, requiring a non-empty `chessdotcom_id`), syncs recent finished games from the Chess.com PubAPI into PostgreSQL, picks one random **unanalyzed loss** (standard chess), runs Stockfish analysis, and stores results in `game_analyses` and `move_analyses`.
+OpenFile is a private, local-first Chess.com review and puzzle trainer. Your
+games, favorites, sidelines, and Stockfish analysis stay in SQLite on your own
+computer.
 
-Stockfish can run in one of two modes (see `STOCKFISH_MODE`):
+## Requirements
 
-- `api` — calls a remote Stockfish HTTP service `POST /analyze-game` (with `X-Stockfish-Api-Key`).
-- `local` — drives a locally installed Stockfish binary over UCI via python-chess (`STOCKFISH_PATH`). No server or API key required.
+- Python 3.10 or newer (3.12 recommended)
+- Node.js 22.13 or newer
+- Stockfish 16 or newer
+- A Chess.com username
 
-Both modes produce the same stored analysis, so you can switch per environment (for example, `local` on your workstation and `api` in production).
+On macOS, install Stockfish with `brew install stockfish`. On Windows, extract a
+current build from the official Stockfish website; setup can usually find it.
 
-Idempotency is enforced in the database:
+## Guided installation
 
-- One `analysis_runs` row per `(run_date, player_id)` while a run is in progress or finished.
-- At most one `game_analyses` row per `(game_id, player_id, stockfish_depth, stockfish_multipv, heuristic_version)`.
+Each OpenFile command prints what to run next. Start in the repository root.
 
-### Schema
+### 1. Select Python and create the environment
 
-Apply the migrations in order on database `cccron` as your app role (for example `cccron_app`):
-
-1. [`sql/001_create_tables.sql`](sql/001_create_tables.sql) — game, analysis, and opening tables.
-2. [`sql/002_create_puzzle_tables.sql`](sql/002_create_puzzle_tables.sql) — `puzzles`, `telegram_users`, and `puzzle_deliveries` (required for puzzle generation and the Telegram bot).
-
-The schema references `public.users(user_id)` and reads `public.users.chessdotcom_id`. Link a user by ensuring that row exists with a populated `chessdotcom_id`.
-
-### Environment
-
-Copy [`.env.example`](.env.example) to `.env` and set at least `DATABASE_URL` and `STOCKFISH_API_KEY`.
-
-`DATABASE_URL` must be a `postgresql://` URI (for example from Vercel storage). Special characters in passwords must be URL-encoded if you embed them in the URL string.
-
-### Install
+If you use pyenv:
 
 ```bash
-cd /path/to/cccron
+pyenv install -s 3.12.1
+pyenv local 3.12.1
+python --version
+python -m venv .venv
+```
+
+Without pyenv, first confirm `python3 --version` reports 3.10 or newer, then:
+
+```bash
 python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
 ```
 
-### Run
+Next, activate it:
 
 ```bash
-. .venv/bin/activate
-python scripts/run_daily_analysis.py
+# macOS / Linux
+source .venv/bin/activate
+
+# Windows PowerShell
+# .venv\Scripts\Activate.ps1
 ```
 
-The target user is selected by `TARGET_USER_ID` and must exist in `public.users` with a populated `chessdotcom_id`.
+Your prompt should now include `(.venv)`. Continue with step 2.
 
-To generate puzzles from analyzed games and run the Telegram bot:
+### 2. Install OpenFile
 
 ```bash
-python scripts/generate_puzzles.py     # build puzzles from move analyses
-python scripts/send_daily_puzzles.py    # push the daily quota to linked Telegram users
-python scripts/run_telegram_bot.py      # interactive /puzzle bot
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-### Using a local Stockfish binary
+Next, run `openfile setup`.
 
-Set `STOCKFISH_MODE=local` and point `STOCKFISH_PATH` at your binary (defaults to `stockfish` on `PATH`). In this mode no HTTP service or `STOCKFISH_API_KEY` is required. Tune `STOCKFISH_THREADS` and `STOCKFISH_HASH_MB` to your hardware. Analysis depth is controlled by `STOCKFISH_DEPTH` (or the `--depth` flag).
+### 3. Configure the local services
 
-### Cron
-
-Example daily at 03:15 (server local time):
-
-```cron
-15 3 * * * cd /path/to/cccron && . .venv/bin/activate && python scripts/run_daily_analysis.py >> /var/log/cccron.log 2>&1
+```bash
+openfile setup
 ```
 
-### Linking a user
+Setup walks through Chess.com, Stockfish, the optional Lichess token, and the
+personal SQLite database. It ends by telling you to run:
 
-Ensure the target user exists in `public.users` with a populated `chessdotcom_id`, then point `TARGET_USER_ID` at that `user_id`. For Telegram delivery, insert a matching row into `telegram_users` (`user_id` referencing `public.users`, plus the recipient's `telegram_id`).
+```bash
+openfile doctor
+```
+
+### 4. Verify and launch
+
+When every doctor check is green, it prints these next steps:
+
+```bash
+cd webui
+npm install
+npm run dev
+```
+
+Open <http://localhost:3000>, then click **Sync games**. `npm install` is only
+needed on the first launch or after web dependencies change. Keep the terminal
+running while using OpenFile; press `Ctrl+C` to stop it.
+
+Open **Schedule** in the main navigation when you want OpenFile to sync,
+prepare reviews, or prepare puzzles automatically. The web page may be closed
+after the native user schedule is installed; the computer must remain awake
+and signed in when work runs.
+
+## Daily use
+
+Usually, start the web UI and use its Games page. The equivalent CLI workflow is:
+
+```bash
+openfile ingest
+openfile select --limit 3
+openfile analyze
+openfile generate
+```
+
+The Games page can also import one of the configured player's Chess.com links,
+start its review immediately, and file it in a collection. The CLI equivalent
+is:
+
+```bash
+openfile import-game --url https://www.chess.com/game/live/123456789
+```
+
+Use **Collections** for opening studies, tournaments, or model games. The Games
+page groups detailed Chess.com opening names into parent families for filtering,
+and the Analysis page includes a position editor with piece placement, side to
+move, castling rights, and en-passant state.
+
+Manage or inspect configuration with:
+
+```bash
+openfile doctor
+openfile config list
+openfile config set analysis_depth 14
+openfile config set language ko
+openfile config path
+```
+
+See [Settings](docs/SETTINGS.md) for every parameter, [Commands](PIPELINE_COMMANDS.md)
+for batch workflows, [Automation](docs/AUTOMATION.md) for scheduled routines,
+and [Architecture](docs/ARCHITECTURE.md) for contributor
+boundaries.
+
+## Privacy and compatibility
+
+OpenFile contacts Chess.com's public API and, when configured, Lichess's opening
+explorer. SQLite, engine analysis, configuration, and tokens remain local.
+
+The former `rookline` command and Rookline application-data directory remain
+supported as compatibility aliases, so upgrading does not hide or replace an
+existing database.
+
+## License
+
+AGPL-3.0-only. Improvements remain available to the community.
