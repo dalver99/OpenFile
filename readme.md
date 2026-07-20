@@ -1,8 +1,58 @@
 # OpenFile
 
-OpenFile is a private, local-first Chess.com review and puzzle trainer. Your
-games, favorites, sidelines, and Stockfish analysis stay in SQLite on your own
-computer.
+**A local-first chess review, analysis, and training workspace powered by your
+own Stockfish.**
+
+OpenFile turns your Chess.com archive into move-by-move reviews, personal
+insights, and reusable training positions. Your games, favorites, collections,
+sidelines, puzzles, and engine analysis stay in SQLite on your own computer.
+
+![OpenFile game library with Chess.com synchronization, opening filters, and review scores](docs/images/game-library.png)
+
+> OpenFile is currently alpha software. Back up your database before testing
+> upgrades, and please report setup problems with the output of `openfile doctor`.
+
+## Main features
+
+- **Game library:** Sync recent Chess.com games or import one game by URL, then
+  search and filter by time control, review status, favorites, collections, and
+  parent opening family.
+- **Local game review:** Analyze games with your installed Stockfish and step
+  through natural chess notation, move classifications, coach-style comments,
+  best-move arrows, an evaluation bar, and an evaluation graph.
+- **Turning-point practice:** Hide the answer and replay mistakes as guided
+  retries before revealing the engine recommendation.
+- **Analysis workbench:** Explore saved or custom positions, create variation
+  trees, draw arrows and square highlights, and configure depth, time, and
+  multiple principal variations.
+- **Personal insights:** Track accuracy, recurring weaknesses, time-pressure
+  patterns, and verified brilliant-move candidates across reviewed games.
+- **Puzzles from your games:** Generate and solve local tactical exercises from
+  meaningful mistakes instead of working through unrelated positions.
+- **Organization:** Favorite games, save sidelines, and build collections for
+  openings, tournaments, model games, or anything else you want to revisit.
+- **Optional automation and enrichment:** Schedule native background routines
+  on macOS, Linux, or Windows, and optionally use Lichess for opening and
+  book-move information.
+- **Private by default:** SQLite and Stockfish run locally. OpenFile only reaches
+  Chess.com's public API and, when enabled, Lichess's opening explorer.
+
+## See it in action
+
+### Turn engine output into useful practice
+
+Review classifications and variations, then enter guided retry mode at a
+turning point. The evaluation, explanation, and best move stay hidden until you
+commit to a move.
+
+![OpenFile guided retry mode with a chessboard, hidden evaluation, and move notation](docs/images/guided-retry.png)
+
+### Find patterns across your games
+
+The Insights page summarizes review scores, severe errors, clock context, and
+verified brilliant moves so you can decide what deserves training time next.
+
+![OpenFile player insights showing review statistics, brilliant moves, and training targets](docs/images/player-insights.png)
 
 ## Requirements
 

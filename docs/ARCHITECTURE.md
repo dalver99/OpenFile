@@ -47,7 +47,6 @@ webui/
     repositories/          SQLite queries
     runtime/               local Python worker launcher
 
-legacy/                    preserved unsupported hosted experiments
 ```
 
 ## Configuration and privacy
