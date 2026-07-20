@@ -99,6 +99,19 @@ openfile analyze
 openfile generate
 ```
 
+The Games page can also import one of the configured player's Chess.com links,
+start its review immediately, and file it in a collection. The CLI equivalent
+is:
+
+```bash
+openfile import-game --url https://www.chess.com/game/live/123456789
+```
+
+Use **Collections** for opening studies, tournaments, or model games. The Games
+page groups detailed Chess.com opening names into parent families for filtering,
+and the Analysis page includes a position editor with piece placement, side to
+move, castling rights, and en-passant state.
+
 Manage or inspect configuration with:
 
 ```bash

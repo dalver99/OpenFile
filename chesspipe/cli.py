@@ -46,6 +46,14 @@ def _cmd_ingest(args: argparse.Namespace, settings: Settings) -> int:
     return 0 if result.get("status") in ("ok", "idle") else 1
 
 
+def _cmd_import_game(args: argparse.Namespace, settings: Settings) -> int:
+    from chesspipe.stages import import_game_stage
+
+    result = import_game_stage(settings, args.url)
+    _print(result)
+    return 0 if result.get("status") == "ok" else 1
+
+
 def _cmd_select(args: argparse.Namespace, settings: Settings) -> int:
     from chesspipe.stages import select_stage
 
@@ -340,6 +348,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("--max-games", type=int, default=None, help="Maximum recent games to compare.")
     p_ingest.add_argument("--sync-run-id", type=int, default=None, help=argparse.SUPPRESS)
     p_ingest.set_defaults(func=_cmd_ingest)
+
+    p_import = sub.add_parser("import-game", help="Import one Chess.com game link")
+    p_import.add_argument("--url", required=True, help="Chess.com live or daily game URL")
+    p_import.set_defaults(func=_cmd_import_game)
 
     p_select = sub.add_parser("select", help="Claim next game(s) to analyze")
     p_select.add_argument("--limit", type=int, default=1)

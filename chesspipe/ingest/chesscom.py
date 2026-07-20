@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import re
 from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any
@@ -8,6 +9,10 @@ from typing import Any
 import requests
 
 BASE_URL = "https://api.chess.com/pub"
+GAME_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?chess\.com/(?:analysis/)?game/(live|daily)/(\d+)",
+    re.IGNORECASE,
+)
 
 # Chess.com result strings that mean the tracked player lost.
 LOSS_RESULTS = {
@@ -33,6 +38,13 @@ class ChessComGame:
     white: dict[str, Any]
     black: dict[str, Any]
     raw: dict[str, Any]
+
+
+def normalize_game_url(value: str) -> str:
+    match = GAME_URL_PATTERN.search(value.strip())
+    if not match:
+        raise ValueError("Enter a Chess.com live or daily game link.")
+    return f"https://www.chess.com/game/{match.group(1).lower()}/{match.group(2)}"
 
 
 class ChessComClient:
@@ -89,6 +101,32 @@ class ChessComClient:
                 )
 
         return sorted(games, key=lambda game: game.end_time or 0, reverse=True)
+
+    def game_by_url(self, username: str, game_url: str) -> ChessComGame | None:
+        """Find one configured player's game by scanning public archives newest first.
+
+        Chess.com's supported PubAPI exposes games in monthly archives rather than
+        through a documented single-game endpoint. Requests remain serial to follow
+        the API's rate-limit guidance.
+        """
+        target = normalize_game_url(game_url)
+        for archive_url in reversed(self.archive_urls(username)):
+            payload = self._get_json(archive_url)
+            for raw_game in payload.get("games", []):
+                raw_url = str(raw_game.get("url", ""))
+                try:
+                    candidate = normalize_game_url(raw_url)
+                except ValueError:
+                    continue
+                if candidate != target:
+                    continue
+                parsed = self._parse_game(username, raw_game)
+                if parsed is None:
+                    raise ValueError(
+                        "That game does not belong to the configured Chess.com account."
+                    )
+                return parsed
+        return None
 
     def _parse_game(self, username: str, raw_game: dict[str, Any]) -> ChessComGame | None:
         white = raw_game.get("white") or {}

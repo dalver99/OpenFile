@@ -84,6 +84,28 @@ CREATE TABLE IF NOT EXISTS favorite_games (
 CREATE INDEX IF NOT EXISTS idx_favorite_games_user_created
     ON favorite_games (user_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS game_collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    color TEXT NOT NULL DEFAULT '#a12222',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_game_collections_user_updated
+    ON game_collections (user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS collection_games (
+    collection_id INTEGER NOT NULL REFERENCES game_collections(id) ON DELETE CASCADE,
+    player_game_id INTEGER NOT NULL REFERENCES player_games(id) ON DELETE CASCADE,
+    added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (collection_id, player_game_id)
+);
+CREATE INDEX IF NOT EXISTS idx_collection_games_player_game
+    ON collection_games (player_game_id, added_at DESC);
+
 CREATE TABLE IF NOT EXISTS openings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     eco_url TEXT UNIQUE,

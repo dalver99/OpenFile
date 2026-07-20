@@ -26,8 +26,8 @@ from chesspipe.analyze.repository import (
 from chesspipe.config import Settings
 from chesspipe.storage import Connection, get_connection
 from chesspipe.engine import build_engine, engine_identity
-from chesspipe.ingest.chesscom import ChessComClient
-from chesspipe.ingest.repository import get_target_player, sync_recent_games
+from chesspipe.ingest.chesscom import ChessComClient, normalize_game_url
+from chesspipe.ingest.repository import get_target_player, sync_recent_games, upsert_game_and_player
 from chesspipe.ingest.runs import create_sync_run, record_sync_game, update_sync_run
 from chesspipe.log import log
 from chesspipe.puzzle.build import cook_record, load_move_rows
@@ -251,6 +251,68 @@ def ingest_stage(
         "forced": force,
         "archive_months": months,
         "max_sync_games": max_games,
+    }
+
+
+def import_game_stage(settings: Settings, game_url: str) -> dict[str, Any]:
+    """Import one game link for the configured Chess.com player."""
+    try:
+        normalized_url = normalize_game_url(game_url)
+    except ValueError as exc:
+        return {"stage": "import_game", "status": "error", "reason": str(exc)}
+
+    with get_connection(settings.database_url, settings.db_schema) as conn:
+        player = get_target_player(conn, settings.target_user_id)
+        if player is None:
+            return {
+                "stage": "import_game",
+                "status": "error",
+                "reason": "target_user_not_found_or_missing_chessdotcom_id",
+            }
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pg.id
+                FROM player_games pg
+                JOIN chesscom_games g ON g.id = pg.game_id
+                WHERE pg.player_id = ? AND g.chesscom_url = ?
+                """,
+                (int(player["id"]), normalized_url),
+            )
+            existing = cur.fetchone()
+        if existing is not None:
+            return {
+                "stage": "import_game",
+                "status": "ok",
+                "player_game_id": int(existing[0]),
+                "game_url": normalized_url,
+                "existing": True,
+            }
+
+        client = ChessComClient(settings.user_agent)
+        try:
+            game = client.game_by_url(str(player["username"]), normalized_url)
+        except Exception as exc:  # noqa: BLE001
+            return {"stage": "import_game", "status": "error", "reason": str(exc)}
+        if game is None:
+            return {
+                "stage": "import_game",
+                "status": "error",
+                "reason": "Game not found in the configured player's public Chess.com archives.",
+            }
+        player_game_id = upsert_game_and_player(
+            conn,
+            int(player["id"]),
+            str(player["username"]),
+            game,
+        )
+        conn.commit()
+    return {
+        "stage": "import_game",
+        "status": "ok",
+        "player_game_id": player_game_id,
+        "game_url": normalized_url,
+        "existing": False,
     }
 
 
