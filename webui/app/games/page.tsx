@@ -11,9 +11,10 @@ import {
   getGameArchiveStats,
   listGames,
   listOpeningFamilies,
-} from "@/server/repositories/games";
-import { listCollections } from "@/server/repositories/collections";
-import { localConfig } from "@/server/database/config";
+} from "@/server/data/games";
+import { listCollections } from "@/server/data/collections";
+import { runtimeSettings } from "@/server/data/settings";
+import { isDemoMode } from "@/server/demo-mode";
 import { language, messages } from "@/i18n/messages";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +31,8 @@ export default async function GamesPage({
   searchParams: GamesSearchParams;
 }) {
   const query = await searchParams;
-  const text = messages[language(localConfig().language)].games;
+  const text = messages[language((await runtimeSettings()).language)].games;
+  const demo = isDemoMode();
   const requestedTime = first(query.time);
   const requestedReview = first(query.review);
   const requestedFavorite = first(query.favorite);
@@ -131,7 +133,7 @@ export default async function GamesPage({
         </div>
       ) : (
         <div className="space-y-6">
-          <LocalOperations text={text} />
+          <LocalOperations text={text} demo={demo} />
           <GameList
             data={gamePage}
             filters={filters}

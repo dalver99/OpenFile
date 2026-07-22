@@ -1,5 +1,6 @@
 import PuzzleTrainer from "@/features/puzzles/PuzzleTrainer";
-import { listPuzzles } from "@/server/repositories/puzzles";
+import { listPuzzles } from "@/server/data/puzzles";
+import { isDemoMode } from "@/server/demo-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export default async function PuzzlesPage() {
       {error ? (
         <div className="rounded-lg border border-rose-300 bg-rose-50 p-4 text-sm text-rose-700">Could not load puzzles: {error}</div>
       ) : (
-        <PuzzleTrainer puzzles={puzzles} />
+        <PuzzleTrainer puzzles={puzzles} demo={isDemoMode()} />
       )}
     </main>
   );

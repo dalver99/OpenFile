@@ -26,9 +26,10 @@ export default function FavoriteButton({
       const response = await fetch(`/api/games/${gameId}/favorite`, {
         method: next ? "PUT" : "DELETE",
       });
+      const data = await response.json();
       if (!response.ok) throw new Error("favorite_failed");
       setFavorite(next);
-      router.refresh();
+      if (!data.demo) router.refresh();
     } catch {
       setFailed(true);
     } finally {

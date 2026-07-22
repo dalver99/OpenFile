@@ -263,7 +263,7 @@ function PlayerStrip({
   );
 }
 
-export default function GameReview({ review, collections }: { review: GameReviewData; collections: GameCollection[] }) {
+export default function GameReview({ review, collections, demo = false }: { review: GameReviewData; collections: GameCollection[]; demo?: boolean }) {
   const [selectedIndex, setSelectedIndex] = useState(review.moves.length ? 1 : 0);
   const [savedSidelines, setSavedSidelines] = useState(review.sidelines);
   const [activeSideline, setActiveSideline] = useState<ActiveSideline | null>(null);
@@ -1276,8 +1276,9 @@ export default function GameReview({ review, collections }: { review: GameReview
           </div>
           <p className="mt-4 text-[11px] leading-4 text-stone-400">
             Review scores and labels are transparent Stockfish-based estimates,
-            not Chess.com&apos;s proprietary formula. Book labels use the
-            authenticated Lichess Masters explorer.
+            not Chess.com&apos;s proprietary formula. {demo
+              ? "Opening labels in this showcase come from the saved snapshot."
+              : "Book labels use the authenticated Lichess Masters explorer."}
           </p>
           {trainingMoves.length ? (
             <button type="button" onClick={() => startRetry(trainingMoves[0])} className="mt-5 flex w-full items-center justify-between rounded-xl bg-violet-600 px-4 py-3.5 text-left text-sm font-black text-white shadow-lg shadow-violet-900/20 ring-4 ring-violet-100 transition hover:bg-violet-700 dark:ring-violet-950/60">

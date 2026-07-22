@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { getPuzzleSolution, recordPuzzleProgress } from "@/server/repositories/puzzles";
+import { getPuzzleSolution, recordPuzzleProgress } from "@/server/data/puzzles";
 
 // POST /api/attempt
 // body: { puzzleId: number, moveUci?: string, reveal?: boolean }

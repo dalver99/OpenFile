@@ -3,7 +3,8 @@ import {
   deleteReviewSideline,
   getSidelineAnchorFen,
   saveReviewSideline,
-} from "@/server/repositories/games";
+} from "@/server/data/games";
+import { isDemoMode } from "@/server/demo-mode";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,7 +80,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!sideline) {
     return Response.json({ error: "sideline_not_found" }, { status: 404 });
   }
-  return Response.json({ sideline });
+  return Response.json({ sideline, demo: isDemoMode() });
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -102,6 +103,6 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
 
   const deleted = await deleteReviewSideline(sidelineId, playerGameId);
   return deleted
-    ? Response.json({ ok: true })
+    ? Response.json({ ok: true, demo: isDemoMode() })
     : Response.json({ error: "sideline_not_found" }, { status: 404 });
 }

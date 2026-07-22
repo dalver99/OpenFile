@@ -1,4 +1,5 @@
-import { createCollection, listCollections } from "@/server/repositories/collections";
+import { createCollection, listCollections } from "@/server/data/collections";
+import { isDemoMode } from "@/server/demo-mode";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,5 +34,5 @@ export async function POST(request: Request) {
   if (collection === "duplicate") {
     return Response.json({ error: "duplicate_collection" }, { status: 409 });
   }
-  return Response.json({ collection }, { status: 201 });
+  return Response.json({ collection, demo: isDemoMode() }, { status: 201 });
 }

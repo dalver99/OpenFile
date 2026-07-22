@@ -176,9 +176,11 @@ function positionFramesFromPgn(pgn: string): AnalysisPositionFrame[] {
 export default function AnalysisWorkbench({
   initialFrames,
   initialCursor = 0,
+  demo = false,
 }: {
   initialFrames?: AnalysisPositionFrame[];
   initialCursor?: number;
+  demo?: boolean;
 }) {
   const startingFrames = useMemo(() => initialFrames?.length
     ? initialFrames
@@ -194,7 +196,7 @@ export default function AnalysisWorkbench({
   const [depth, setDepth] = useState(14);
   const [multipv, setMultipv] = useState(3);
   const [timeSec, setTimeSec] = useState(1.5);
-  const [autoAnalyze, setAutoAnalyze] = useState(true);
+  const [autoAnalyze, setAutoAnalyze] = useState(!demo);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -232,6 +234,10 @@ export default function AnalysisWorkbench({
   }, [nodeById]);
 
   const analyzePosition = useCallback(async () => {
+    if (demo) {
+      setError("Hosted demo: connect the local app to run Stockfish analysis.");
+      return;
+    }
     const id = ++requestId.current;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -259,7 +265,7 @@ export default function AnalysisWorkbench({
     } finally {
       if (id === requestId.current) setBusy(false);
     }
-  }, [currentFen, depth, multipv, timeSec]);
+  }, [currentFen, demo, depth, multipv, timeSec]);
 
   useEffect(() => {
     if (!autoAnalyze) return;
@@ -450,20 +456,21 @@ export default function AnalysisWorkbench({
         <div className="shrink-0 border-b border-stone-100 p-3 dark:border-stone-800">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand-700 dark:text-brand-400">{result?.engine ?? "Local Stockfish"}</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand-700 dark:text-brand-400">{demo ? "Demo board" : result?.engine ?? "Local Stockfish"}</p>
               <div className="flex items-baseline gap-2"><h2 className="text-2xl font-black text-stone-900 dark:text-stone-50">{topLine ? lineEvaluation(topLine) : "—"}</h2><span className="text-[11px] text-stone-400">White</span></div>
             </div>
-            <button type="button" onClick={() => void analyzePosition()} disabled={busy} className="rounded-lg bg-brand-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-800 disabled:opacity-60">{busy ? "Analyzing…" : "Analyze"}</button>
+            <button type="button" onClick={() => void analyzePosition()} disabled={busy || demo} className="rounded-lg bg-brand-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-brand-800 disabled:opacity-60">{demo ? "Desktop only" : busy ? "Analyzing…" : "Analyze"}</button>
           </div>
           <div className="mt-2 grid grid-cols-4 gap-1.5">
             <label className="text-[10px] font-semibold text-stone-500">Depth<select value={depth} onChange={(event) => setDepth(Number(event.target.value))} className="mt-0.5 block w-full rounded-md border border-stone-200 bg-white px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{[10, 12, 14, 16, 18, 20, 22].map((value) => <option key={value}>{value}</option>)}</select></label>
             <label className="text-[10px] font-semibold text-stone-500">Branches<select value={multipv} onChange={(event) => setMultipv(Number(event.target.value))} className="mt-0.5 block w-full rounded-md border border-stone-200 bg-white px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{[1, 2, 3, 5].map((value) => <option key={value}>{value}</option>)}</select></label>
             <label className="text-[10px] font-semibold text-stone-500">Time<select value={timeSec} onChange={(event) => setTimeSec(Number(event.target.value))} className="mt-0.5 block w-full rounded-md border border-stone-200 bg-white px-1.5 py-1 text-[11px] text-stone-800 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">{[[0.5, "0.5s"], [1, "1s"], [1.5, "1.5s"], [3, "3s"], [5, "5s"], [10, "10s"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <label className="flex items-end"><button type="button" onClick={() => setAutoAnalyze((value) => !value)} aria-pressed={autoAnalyze} className={`w-full rounded-md border px-1.5 py-1 text-[11px] font-bold ${autoAnalyze ? "border-brand-600 bg-brand-50 text-brand-700 dark:bg-brand-950 dark:text-brand-300" : "border-stone-200 text-stone-500 dark:border-stone-700"}`}>{autoAnalyze ? "● Auto" : "○ Manual"}</button></label>
+            <label className="flex items-end"><button type="button" disabled={demo} onClick={() => setAutoAnalyze((value) => !value)} aria-pressed={autoAnalyze} className={`w-full rounded-md border px-1.5 py-1 text-[11px] font-bold disabled:opacity-40 ${autoAnalyze ? "border-brand-600 bg-brand-50 text-brand-700 dark:bg-brand-950 dark:text-brand-300" : "border-stone-200 text-stone-500 dark:border-stone-700"}`}>{demo ? "Demo" : autoAnalyze ? "● Auto" : "○ Manual"}</button></label>
           </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          {demo ? <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200">Move pieces, edit the board, import FEN/PGN, and build variation trees. Live evaluations require local Stockfish.</div> : null}
           {error ? <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"><strong>Analysis failed:</strong> {error}</div> : null}
 
           <section className="overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">

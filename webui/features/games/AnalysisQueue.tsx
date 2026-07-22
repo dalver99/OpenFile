@@ -54,9 +54,11 @@ function phase(detail: string | null): string {
 export default function AnalysisQueue({
   candidates,
   totalWaiting,
+  demo = false,
 }: {
   candidates: GameCard[];
   totalWaiting: number;
+  demo?: boolean;
 }) {
   const router = useRouter();
   const initialActive = candidates.find((game) => ["selected", "analyzing"].includes(game.status));
@@ -216,6 +218,7 @@ export default function AnalysisQueue({
         </summary>
 
       <div className="border-t border-stone-100 p-4 dark:border-stone-800">
+        {demo ? <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/35 dark:text-amber-200">Demo preview: selection and filters work; Analyze simulates a completed queue without running Stockfish.</p> : null}
         <p className="text-xs leading-5 text-stone-500">Nothing starts until you select it.</p>
 
         <div className="mt-4 grid grid-cols-2 gap-2">

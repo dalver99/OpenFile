@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 type Status = { analyzed: boolean; status: string | null; detail: string | null };
 
@@ -12,29 +13,31 @@ const phaseLabels: Record<string, string> = {
   saving_review: "Saving move scores and comments",
 };
 
-export default function AnalysisLauncher({ gameId, initialStatus }: { gameId: number; initialStatus: string }) {
+export default function AnalysisLauncher({ gameId, initialStatus, demo = false }: { gameId: number; initialStatus: string; demo?: boolean }) {
   const router = useRouter();
   const started = useRef(false);
   const [state, setState] = useState<Status>({ analyzed: false, status: initialStatus, detail: null });
   const [seconds, setSeconds] = useState(0);
 
   const start = useCallback(async () => {
+    if (demo) return;
     setState((current) => ({ ...current, status: "selected", detail: null }));
     const response = await fetch(`/api/games/${gameId}/analyze`, { method: "POST" });
     const data = await response.json();
     if (!response.ok) {
       setState({ analyzed: false, status: "failed", detail: data.error ?? "Could not start analysis." });
     }
-  }, [gameId]);
+  }, [demo, gameId]);
 
   useEffect(() => {
-    if (!started.current && initialStatus !== "analyzing") {
+    if (!demo && !started.current && initialStatus !== "analyzing") {
       started.current = true;
       void start();
     }
-  }, [initialStatus, start]);
+  }, [demo, initialStatus, start]);
 
   useEffect(() => {
+    if (demo) return;
     const timer = window.setInterval(async () => {
       setSeconds((value) => value + 2);
       try {
@@ -50,7 +53,18 @@ export default function AnalysisLauncher({ gameId, initialStatus }: { gameId: nu
       }
     }, 2_000);
     return () => window.clearInterval(timer);
-  }, [gameId, router]);
+  }, [demo, gameId, router]);
+
+  if (demo) {
+    return (
+      <div className="mx-auto max-w-xl rounded-3xl border border-amber-200 bg-amber-50 p-8 text-center shadow-sm dark:border-amber-900 dark:bg-amber-950/30 sm:p-12">
+        <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-amber-100 text-2xl text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">♞</div>
+        <h1 className="mt-6 text-2xl font-bold text-stone-900 dark:text-stone-50">Analysis needs the desktop app</h1>
+        <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-stone-600 dark:text-stone-300">This game is intentionally left unanalyzed to demonstrate the queue. The hosted demo cannot start a local Stockfish process or modify the archive.</p>
+        <Link href="/games/207" className="mt-6 inline-flex rounded-xl bg-brand-700 px-5 py-2.5 text-sm font-bold text-white hover:bg-brand-800">Open a completed review</Link>
+      </div>
+    );
+  }
 
   const failed = state.status === "failed";
   const phase = phaseLabels[state.detail ?? ""] ??

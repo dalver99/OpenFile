@@ -7,7 +7,7 @@ import type { GameCollection } from "@/domain/games";
 
 const COLORS = ["#a12222", "#7c3aed", "#2563eb", "#0f766e", "#65a30d", "#d97706", "#57534e"];
 
-export default function CollectionManager({ initialCollections }: { initialCollections: GameCollection[] }) {
+export default function CollectionManager({ initialCollections, demo = false }: { initialCollections: GameCollection[]; demo?: boolean }) {
   const router = useRouter();
   const [collections, setCollections] = useState(initialCollections);
   const [name, setName] = useState("");
@@ -32,7 +32,7 @@ export default function CollectionManager({ initialCollections }: { initialColle
       setCollections((current) => [data.collection, ...current]);
       setName("");
       setDescription("");
-      router.refresh();
+      if (!data.demo) router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not create the collection.");
     } finally {
@@ -56,7 +56,7 @@ export default function CollectionManager({ initialCollections }: { initialColle
       const data = await response.json();
       if (!response.ok) throw new Error(data.error === "duplicate_collection" ? "A collection with that name already exists." : "Could not save this collection.");
       setCollections((current) => current.map((item) => item.id === collection.id ? { ...collection, ...data.collection, game_count: collection.game_count } : item));
-      router.refresh();
+      if (!data.demo) router.refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not save this collection.");
     } finally {
@@ -68,9 +68,10 @@ export default function CollectionManager({ initialCollections }: { initialColle
     if (!window.confirm(`Delete “${collection.name}”? Games remain in your library.`)) return;
     setBusyId(collection.id);
     const response = await fetch(`/api/collections/${collection.id}`, { method: "DELETE" });
+    const data = await response.json();
     if (response.ok) {
       setCollections((current) => current.filter((item) => item.id !== collection.id));
-      router.refresh();
+      if (!data.demo) router.refresh();
     } else {
       setError("Could not delete this collection.");
     }
@@ -80,6 +81,7 @@ export default function CollectionManager({ initialCollections }: { initialColle
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[22rem_minmax(0,1fr)]">
       <form onSubmit={create} className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm dark:border-stone-700 dark:bg-stone-900 lg:sticky lg:top-24">
+        {demo ? <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/35 dark:text-amber-200">Demo changes are kept only in this page until refresh.</p> : null}
         <p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-700 dark:text-brand-400">New collection</p>
         <h2 className="mt-1 text-lg font-black text-stone-900 dark:text-white">Create a chess folder</h2>
         <input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} placeholder="e.g. Caro-Kann study" aria-label="Collection name" className="mt-4 w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm outline-none focus:border-brand-400 dark:border-stone-700 dark:bg-stone-800" />

@@ -30,6 +30,7 @@ export default function CollectionMenu({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gameId }),
       });
+      const data = await response.json();
       if (!response.ok) return;
       setIncluded((current) => {
         const next = new Set(current);
@@ -37,7 +38,7 @@ export default function CollectionMenu({
         else next.delete(collectionId);
         return next;
       });
-      router.refresh();
+      if (!data.demo) router.refresh();
     } finally {
       setPending(null);
     }

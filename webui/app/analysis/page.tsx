@@ -4,8 +4,9 @@ import AnalysisWorkbench, {
   type AnalysisPositionFrame,
 } from "@/features/analysis/AnalysisWorkbench";
 import type { GameReview } from "@/domain/games";
-import { getGameReview } from "@/server/repositories/games";
+import { getGameReview } from "@/server/data/games";
 import FavoriteButton from "@/features/games/FavoriteButton";
+import { isDemoMode } from "@/server/demo-mode";
 
 type AnalysisSearchParams = Promise<{
   game?: string | string[];
@@ -102,6 +103,7 @@ export default async function AnalysisPage({
   searchParams: AnalysisSearchParams;
 }) {
   const query = await searchParams;
+  const demo = isDemoMode();
   const gameId = integer(first(query.game), 0);
   const review = gameId > 0 ? await getGameReview(gameId) : null;
   const imported = review
@@ -139,6 +141,7 @@ export default async function AnalysisPage({
       <AnalysisWorkbench
         initialFrames={imported?.frames}
         initialCursor={imported?.cursor}
+        demo={demo}
       />
     </main>
   );

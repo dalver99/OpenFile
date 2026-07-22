@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { GameCollection } from "@/domain/games";
 
-export default function ImportGameCard({ collections }: { collections: GameCollection[] }) {
+export default function ImportGameCard({ collections, demo = false }: { collections: GameCollection[]; demo?: boolean }) {
   const router = useRouter();
   const [url, setUrl] = useState("");
   const [analyze, setAnalyze] = useState(true);
@@ -52,6 +52,7 @@ export default function ImportGameCard({ collections }: { collections: GameColle
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-700 dark:text-brand-400">Add one game</p>
       <h2 className="mt-1 text-base font-black text-stone-900 dark:text-white">Import a Chess.com link</h2>
       <p className="mt-1 text-xs leading-5 text-stone-500">The game is kept in your library. Older links may take longer while OpenFile searches your public monthly archives.</p>
+      {demo ? <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/35 dark:text-amber-200">Import is disabled in the hosted demo because its archive is fixed.</p> : null}
       <form onSubmit={submit} className="mt-3 space-y-2.5">
         <input
           value={url}
@@ -59,6 +60,7 @@ export default function ImportGameCard({ collections }: { collections: GameColle
           type="url"
           placeholder="https://www.chess.com/game/live/…"
           aria-label="Chess.com game link"
+          disabled={demo}
           className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-xs text-stone-800 outline-none focus:border-brand-400 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200"
         />
         {collections.length ? (
@@ -71,7 +73,7 @@ export default function ImportGameCard({ collections }: { collections: GameColle
           <input type="checkbox" checked={analyze} onChange={(event) => setAnalyze(event.target.checked)} className="h-4 w-4 accent-brand-700" />
           Analyze immediately
         </label>
-        <button type="submit" disabled={busy || !url.trim()} className="w-full rounded-lg bg-stone-900 px-3 py-2.5 text-xs font-black text-white transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:bg-stone-300 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white dark:disabled:bg-stone-700">
+        <button type="submit" disabled={demo || busy || !url.trim()} className="w-full rounded-lg bg-stone-900 px-3 py-2.5 text-xs font-black text-white transition hover:bg-stone-700 disabled:cursor-not-allowed disabled:bg-stone-300 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white dark:disabled:bg-stone-700">
           {busy ? "Searching Chess.com archives…" : "Import game"}
         </button>
       </form>

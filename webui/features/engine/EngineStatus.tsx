@@ -2,9 +2,19 @@ type EngineStatusProps = {
   stockfishPath: string | null;
   threads: number;
   hashMb: number;
+  demo?: boolean;
 };
 
-export default function EngineStatus({ stockfishPath, threads, hashMb }: EngineStatusProps) {
+export default function EngineStatus({ stockfishPath, threads, hashMb, demo = false }: EngineStatusProps) {
+  if (demo) {
+    return (
+      <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-stone-400">Hosted demo</p>
+        <h2 className="mt-1 text-base font-black text-stone-900 dark:text-white">Local engine not attached</h2>
+        <p className="mt-3 text-xs leading-5 text-stone-500">The full app discovers your Stockfish binary and runs analysis on your computer. Vercel only serves the showcase data.</p>
+      </section>
+    );
+  }
   const executable = stockfishPath?.split(/[\\/]/).pop() || "Not configured";
   return (
     <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900">

@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 import ThemeToggle from "@/components/ThemeToggle";
-import { localConfig } from "@/server/database/config";
+import { runtimeSettings } from "@/server/data/settings";
+import { isDemoMode } from "@/server/demo-mode";
 import { language, messages } from "@/i18n/messages";
 import "./globals.css";
 
@@ -32,12 +33,13 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const lang = language(localConfig().language);
+  const demo = isDemoMode();
+  const lang = language((await runtimeSettings()).language);
   const text = messages[lang];
   return (
     <html lang={lang} className="h-full antialiased" suppressHydrationWarning>
@@ -69,6 +71,11 @@ export default function RootLayout({
             </nav>
           </div>
         </header>
+        {demo ? (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs font-semibold text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/45 dark:text-amber-200">
+            Live demo · sanitized sample archive · engine jobs are previews and changes reset
+          </div>
+        ) : null}
         {children}
       </body>
     </html>

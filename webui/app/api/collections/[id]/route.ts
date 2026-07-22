@@ -1,4 +1,5 @@
-import { deleteCollection, updateCollection } from "@/server/repositories/collections";
+import { deleteCollection, updateCollection } from "@/server/data/collections";
+import { isDemoMode } from "@/server/demo-mode";
 
 export const runtime = "nodejs";
 
@@ -32,12 +33,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   });
   if (collection === "missing") return Response.json({ error: "collection_not_found" }, { status: 404 });
   if (collection === "duplicate") return Response.json({ error: "duplicate_collection" }, { status: 409 });
-  return Response.json({ collection });
+  return Response.json({ collection, demo: isDemoMode() });
 }
 
 export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const id = idFrom((await params).id);
   if (id == null) return Response.json({ error: "invalid_collection_id" }, { status: 400 });
   if (!await deleteCollection(id)) return Response.json({ error: "collection_not_found" }, { status: 404 });
-  return Response.json({ deleted: true });
+  return Response.json({ deleted: true, demo: isDemoMode() });
 }

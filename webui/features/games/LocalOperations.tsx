@@ -82,7 +82,7 @@ function Progress({ run }: { run: SyncRun }) {
   );
 }
 
-export default function LocalOperations({ text }: { text: GameText }) {
+export default function LocalOperations({ text, demo = false }: { text: GameText; demo?: boolean }) {
   const router = useRouter();
   const [state, setState] = useState<State | null>(null);
   const [archiveMonths, setArchiveMonths] = useState(1);
@@ -153,6 +153,7 @@ export default function LocalOperations({ text }: { text: GameText }) {
   return (
     <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm dark:border-stone-700 dark:bg-stone-900">
       <div className="p-5">
+        {demo ? <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/35 dark:text-amber-200">Demo preview: Check now returns a sample sync result; it does not contact Chess.com.</p> : null}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-stone-400">Game library</p>

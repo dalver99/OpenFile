@@ -1,4 +1,5 @@
-import { setCollectionMembership } from "@/server/repositories/collections";
+import { setCollectionMembership } from "@/server/data/collections";
+import { isDemoMode } from "@/server/demo-mode";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
   const result = await setCollectionMembership(parsed.collectionId, parsed.gameId, true);
   if (result === "missing") return Response.json({ error: "game_or_collection_not_found" }, { status: 404 });
-  return Response.json({ included: true });
+  return Response.json({ included: true, demo: isDemoMode() });
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -35,5 +36,5 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   }
   const result = await setCollectionMembership(parsed.collectionId, parsed.gameId, false);
   if (result === "missing") return Response.json({ error: "game_or_collection_not_found" }, { status: 404 });
-  return Response.json({ included: false });
+  return Response.json({ included: false, demo: isDemoMode() });
 }

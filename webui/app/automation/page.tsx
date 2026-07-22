@@ -1,10 +1,11 @@
 import AutomationSettings from "@/features/automation/AutomationSettings";
-import { localConfig } from "@/server/database/config";
+import { runtimeSettings } from "@/server/data/settings";
+import { isDemoMode } from "@/server/demo-mode";
 import { language, messages } from "@/i18n/messages";
 
 export const dynamic = "force-dynamic";
 
-export default function AutomationPage() {
-  const text = messages[language(localConfig().language)].automation;
-  return <AutomationSettings text={text} />;
+export default async function AutomationPage() {
+  const text = messages[language((await runtimeSettings()).language)].automation;
+  return <AutomationSettings text={text} demo={isDemoMode()} />;
 }

@@ -1,4 +1,5 @@
-import { setGameFavorite } from "@/server/repositories/games";
+import { setGameFavorite } from "@/server/data/games";
+import { isDemoMode } from "@/server/demo-mode";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,7 @@ async function update(
   if (status === "missing") {
     return Response.json({ error: "game_not_found" }, { status: 404 });
   }
-  return Response.json({ favorite });
+  return Response.json({ favorite, demo: isDemoMode() });
 }
 
 export async function PUT(

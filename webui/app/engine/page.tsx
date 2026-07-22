@@ -1,14 +1,16 @@
 import AnalysisQueue from "@/features/games/AnalysisQueue";
 import ImportGameCard from "@/features/games/ImportGameCard";
 import EngineStatus from "@/features/engine/EngineStatus";
-import { getGameArchiveStats, listAnalysisCandidates } from "@/server/repositories/games";
-import { listCollections } from "@/server/repositories/collections";
-import { localConfig } from "@/server/database/config";
+import { getGameArchiveStats, listAnalysisCandidates } from "@/server/data/games";
+import { listCollections } from "@/server/data/collections";
+import { runtimeSettings } from "@/server/data/settings";
+import { isDemoMode } from "@/server/demo-mode";
 
 export const dynamic = "force-dynamic";
 
 export default async function EnginePage() {
-  const config = localConfig();
+  const config = await runtimeSettings();
+  const demo = isDemoMode();
   const [stats, candidates, collections] = await Promise.all([
     getGameArchiveStats(),
     listAnalysisCandidates(200),
@@ -24,15 +26,16 @@ export default async function EnginePage() {
       </header>
       <div className="grid min-h-0 flex-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-h-0 lg:h-full lg:overflow-y-auto lg:pr-2">
-          <AnalysisQueue candidates={candidates} totalWaiting={stats.waiting} />
+          <AnalysisQueue candidates={candidates} totalWaiting={stats.waiting} demo={demo} />
         </div>
         <aside className="space-y-5 lg:h-full lg:overflow-y-auto lg:pr-1">
           <EngineStatus
             stockfishPath={config.stockfish_path?.trim() || null}
             threads={Math.max(1, config.stockfish_threads ?? 1)}
             hashMb={Math.max(16, config.stockfish_hash_mb ?? 128)}
+            demo={demo}
           />
-          <ImportGameCard collections={collections} />
+          <ImportGameCard collections={collections} demo={demo} />
         </aside>
       </div>
     </main>

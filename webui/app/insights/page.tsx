@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { InsightSlice } from "@/domain/insights";
-import { getPlayerInsights } from "@/server/repositories/insights";
+import { getPlayerInsights } from "@/server/data/insights";
 
 export const dynamic = "force-dynamic";
 
@@ -140,8 +140,8 @@ export default async function InsightsPage() {
               <h2 className="text-xl font-black text-stone-900 dark:text-stone-50">Recent review trend</h2>
               <p className="mt-1 text-xs text-stone-500">Oldest to newest · last {insights.trend.length} reviewed games</p>
               <div className="mt-5 flex h-40 items-end gap-1.5 border-b border-stone-200 dark:border-stone-700">
-                {insights.trend.map((game) => (
-                  <Link key={game.id} href={`/games/${game.id}`} className="group flex h-full min-w-0 flex-1 items-end" title={`${game.playedAt ?? "Unknown date"}: ${game.accuracy}%`}>
+                {insights.trend.map((game, index) => (
+                  <Link key={`${game.id}-${game.playedAt ?? "unknown"}-${index}`} href={`/games/${game.id}`} className="group flex h-full min-w-0 flex-1 items-end" title={`${game.playedAt ?? "Unknown date"}: ${game.accuracy}%`}>
                     <span className={`block w-full rounded-t transition-opacity group-hover:opacity-70 ${game.result === "win" ? "bg-brand-500" : game.result === "draw" ? "bg-sky-400" : "bg-orange-400"}`} style={{ height: `${Math.max(8, game.accuracy)}%` }} />
                   </Link>
                 ))}

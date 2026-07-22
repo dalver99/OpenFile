@@ -51,7 +51,7 @@ function providerLabel(value: string | null): string {
   return "Not installed";
 }
 
-export default function AutomationSettings({ text }: { text: AutomationText }) {
+export default function AutomationSettings({ text, demo = false }: { text: AutomationText; demo?: boolean }) {
   const [state, setState] = useState<AutomationState | null>(null);
   const [form, setForm] = useState<Schedule>({
     preset: "puzzles",
@@ -135,6 +135,7 @@ export default function AutomationSettings({ text }: { text: AutomationText }) {
           <span className={`rounded-full px-3 py-1 text-xs font-black ${active ? "bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300" : "bg-stone-200 text-stone-600 dark:bg-stone-800 dark:text-stone-300"}`}>{active ? `● ${text.active}` : `○ ${text.off}`}</span>
         </div>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-stone-500">{text.description}</p>
+        {demo ? <p className="mt-4 max-w-2xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200">Schedule controls are shown as a preview. Browser hosting cannot install launchd, systemd, cron, or Windows Task Scheduler jobs on your computer.</p> : null}
       </section>
 
       <div className="grid items-start gap-6 lg:grid-cols-[1.2fr_0.8fr]">

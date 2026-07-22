@@ -73,7 +73,7 @@ function puzzleState(puzzle: PuzzleCard, result: Result | undefined): "todo" | "
   return "todo";
 }
 
-export default function PuzzleTrainer({ puzzles }: { puzzles: PuzzleCard[] }) {
+export default function PuzzleTrainer({ puzzles, demo = false }: { puzzles: PuzzleCard[]; demo?: boolean }) {
   const [idx, setIdx] = useState(0);
   const [phaseFilter, setPhaseFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -235,6 +235,7 @@ export default function PuzzleTrainer({ puzzles }: { puzzles: PuzzleCard[] }) {
 
   return (
     <div className="space-y-5">
+      {demo ? <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200">This sample puzzle is fully playable. Progress lasts for this session; generating new puzzles requires the local app.</p> : null}
       <QueueHeader
         puzzles={puzzles}
         solvedCount={solvedCount}
