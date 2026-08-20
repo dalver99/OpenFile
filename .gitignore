@@ -10,8 +10,8 @@ rookline.config.json
 openfile.config.json
 *.local.json
 
-# Data & virtualenvs
-data/
+# Data & virtualenvs (repo-root local data only; keep webui/server/data)
+/data/
 *.db
 *.db-wal
 *.db-shm
