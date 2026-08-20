@@ -14,7 +14,7 @@ sidelines, puzzles, and engine analysis stay in SQLite on your own computer.
 
 ## Hosted demo
 
-Try the [live demo](https://open-file-e5vzr4hb7-dalver99s-projects.vercel.app/automation).
+Try the [live demo](https://open-file-e5vzr4hb7-dalver99s-projects.vercel.app/insights).
 
 The `demo` branch runs without SQLite, Python, Stockfish, or private
 configuration. It contains a small sanitized archive snapshot: reviews, graphs,
