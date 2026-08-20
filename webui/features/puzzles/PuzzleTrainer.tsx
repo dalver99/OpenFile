@@ -242,6 +242,7 @@ export default function PuzzleTrainer({ puzzles }: { puzzles: PuzzleCard[] }) {
         statusFilter={statusFilter}
         onFilter={changeFilter}
       />
+      <PuzzleGenerator compact />
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(480px,680px)_minmax(320px,1fr)]">
         <section className="mx-auto w-full max-w-[680px] lg:sticky lg:top-20">

@@ -61,6 +61,7 @@ export type GameArchiveStats = {
   reviewed: number;
   waiting: number;
   analyzing: number;
+  analyzedMoves: number;
 };
 
 export type CandidateLine = {

@@ -74,6 +74,7 @@ export default async function GamesPage({
     reviewed: 0,
     waiting: 0,
     analyzing: 0,
+    analyzedMoves: 0,
   };
   let collections: GameCollection[] = [];
   let openingFamilies: OpeningFamily[] = [];
@@ -88,6 +89,7 @@ export default async function GamesPage({
   } catch (caught) {
     error = caught instanceof Error ? caught.message : "Could not load games.";
   }
+  const coverage = stats.total ? Math.round((stats.reviewed / stats.total) * 100) : 0;
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
@@ -121,6 +123,12 @@ export default async function GamesPage({
               {stats.total}
             </strong>{" "}
             {text.total.toLowerCase()}
+          </span>
+          <span title="Reviewed games as a share of your imported Chess.com games">
+            <strong className="mr-1 text-sm text-brand-700 dark:text-brand-400">
+              {coverage}%
+            </strong>{" "}
+            analyzed · {stats.analyzedMoves.toLocaleString()} moves
           </span>
         </div>
       </section>

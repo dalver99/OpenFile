@@ -181,7 +181,13 @@ export async function getGameArchiveStats(): Promise<GameArchiveStats> {
             count(*) FILTER (WHERE ga.id IS NULL)::int AS waiting,
             count(*) FILTER (
               WHERE ga.id IS NULL AND pg.status IN ('selected', 'analyzing')
-            )::int AS analyzing
+            )::int AS analyzing,
+            (
+              SELECT count(*)::int
+              FROM move_analyses ma
+              JOIN game_analyses analyzed_ga ON analyzed_ga.id = ma.game_analysis_id
+              WHERE analyzed_ga.player_id = $1
+            ) AS analyzed_moves
      ${gameFrom}
      WHERE pg.player_id = $1 AND g.rules = 'chess'`,
     [WEBUI_USER_ID],
@@ -191,6 +197,7 @@ export async function getGameArchiveStats(): Promise<GameArchiveStats> {
     reviewed: Number(rows[0]?.reviewed ?? 0),
     waiting: Number(rows[0]?.waiting ?? 0),
     analyzing: Number(rows[0]?.analyzing ?? 0),
+    analyzedMoves: Number(rows[0]?.analyzed_moves ?? 0),
   };
 }
 

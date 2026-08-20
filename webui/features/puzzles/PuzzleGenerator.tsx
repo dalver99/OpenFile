@@ -11,7 +11,7 @@ type GenerateOperation = {
   completed?: number;
 };
 
-export default function PuzzleGenerator() {
+export default function PuzzleGenerator({ compact = false }: { compact?: boolean }) {
   const router = useRouter();
   const [count, setCount] = useState(3);
   const [enabled, setEnabled] = useState(true);
@@ -60,6 +60,38 @@ export default function PuzzleGenerator() {
   const running = operation?.status === "running";
   const completed = operation?.completed ?? 0;
   const total = operation?.total ?? count;
+
+  if (compact) {
+    return (
+      <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm dark:border-stone-700 dark:bg-stone-900">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-black text-stone-900 dark:text-stone-50">Generate more puzzles</p>
+            <p className="mt-0.5 text-xs text-stone-500">Check reviewed games for another useful training position.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-xs font-semibold text-stone-500">
+              Check
+              <select value={count} onChange={(event) => setCount(Number(event.target.value))} disabled={running} className="rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs font-bold text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-200">
+                {[1, 3, 5, 10].map((value) => <option key={value} value={value}>{value} games</option>)}
+              </select>
+            </label>
+            <button type="button" onClick={() => void generate()} disabled={!enabled || running} className="rounded-lg bg-brand-700 px-3 py-2 text-xs font-black text-white transition hover:bg-brand-800 disabled:cursor-not-allowed disabled:bg-stone-300 dark:disabled:bg-stone-700">
+              {running ? "Generating…" : "Generate"}
+            </button>
+          </div>
+        </div>
+        {running ? (
+          <div className="mt-3">
+            <div className="flex justify-between text-[11px] font-semibold text-stone-500"><span>{operation.message}</span><span>{completed}/{total}</span></div>
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800"><div className="h-full rounded-full bg-brand-700 transition-[width] duration-500" style={{ width: `${Math.max(5, (completed / Math.max(1, total)) * 100)}%` }} /></div>
+          </div>
+        ) : operation && operation.status !== "idle" ? <p className={`mt-3 text-xs font-semibold ${operation.status === "complete" ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{operation.message}</p> : null}
+        {error ? <p className="mt-2 text-xs text-rose-700 dark:text-rose-300">{error}</p> : null}
+        {!enabled ? <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Local operations are disabled. Run OpenFile Doctor, then restart the web UI.</p> : null}
+      </section>
+    );
+  }
 
   return (
     <div className="rounded-3xl border border-dashed border-stone-300 bg-white p-8 text-center shadow-sm dark:border-stone-700 dark:bg-stone-900 sm:p-10">

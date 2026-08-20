@@ -149,6 +149,10 @@ function compactPv(line: EngineLine): string {
   return continuation.length > 8 ? `${visible} …` : visible;
 }
 
+function branchRowCount(multipv: number): number {
+  return Math.max(1, Math.min(5, multipv));
+}
+
 function positionFramesFromPgn(pgn: string): AnalysisPositionFrame[] {
   const parsed = new Chess();
   parsed.loadPgn(pgn);
@@ -222,6 +226,7 @@ export default function AnalysisWorkbench({
     endSquare: topLine.bestMoveUci.slice(2, 4),
     color: "#65a30d",
   }] : [];
+  const reservedBranchRows = branchRowCount(multipv);
 
   const navigateToNode = useCallback((id: string) => {
     const target = nodeById.get(id);
@@ -468,19 +473,26 @@ export default function AnalysisWorkbench({
 
           <section className="overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">
             <div className="flex items-center justify-between border-b border-stone-100 px-3 py-2 dark:border-stone-800"><h3 className="text-xs font-black text-stone-900 dark:text-stone-50">Engine branches</h3><span className="text-[10px] text-stone-400">click first move to play</span></div>
-            {result ? (
+            <div className="relative" style={{ minHeight: `${reservedBranchRows * 34}px` }}>
               <div className="divide-y divide-stone-100 dark:divide-stone-800" role="tree">
-              {result.lines.map((line) => (
-                <div key={line.rank} role="treeitem" aria-selected={line.rank === 1} className="grid grid-cols-[3.25rem_minmax(0,1fr)] gap-2 px-3 py-2 text-xs">
-                  <span className="font-mono font-bold text-stone-500">{lineEvaluation(line)}</span>
-                  <div className="min-w-0 border-l border-stone-200 pl-2 dark:border-stone-700">
-                    <button type="button" disabled={!line.bestMoveUci} onClick={() => { if (line.bestMoveUci) playMove(line.bestMoveUci); }} className="mr-1 font-black text-stone-900 hover:text-brand-700 disabled:opacity-50 dark:text-stone-50 dark:hover:text-brand-400">{line.bestMoveSan ?? "—"}</button>
-                    <span className="leading-5 text-stone-500">{compactPv(line)}</span>
-                  </div>
-                </div>
-              ))}
+                {Array.from({ length: reservedBranchRows }, (_, index) => {
+                  const line = result?.lines[index];
+                  if (!line) {
+                    return <div key={`placeholder-${index}`} className="h-[34px] px-3 py-2"><div className={`h-3 w-3/4 rounded bg-stone-100 dark:bg-stone-800 ${busy ? "animate-pulse" : ""}`} /></div>;
+                  }
+                  return (
+                    <div key={line.rank} role="treeitem" aria-selected={line.rank === 1} className="grid h-[34px] grid-cols-[3.25rem_minmax(0,1fr)] items-center gap-2 px-3 text-xs">
+                      <span className="font-mono font-bold text-stone-500">{lineEvaluation(line)}</span>
+                      <div className="flex min-w-0 items-center gap-1 border-l border-stone-200 pl-2 dark:border-stone-700">
+                        <button type="button" disabled={!line.bestMoveUci} onClick={() => { if (line.bestMoveUci) playMove(line.bestMoveUci); }} className="shrink-0 font-black text-stone-900 hover:text-brand-700 disabled:opacity-50 dark:text-stone-50 dark:hover:text-brand-400">{line.bestMoveSan ?? "—"}</button>
+                        <span className="min-w-0 truncate whitespace-nowrap text-stone-500">{compactPv(line) || "—"}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ) : <p className={`px-3 py-3 text-xs text-stone-400 ${busy ? "animate-pulse" : ""}`}>{busy ? "Stockfish is calculating…" : "Play a move or choose Analyze."}</p>}
+              {!result ? <p className={`pointer-events-none absolute inset-0 flex items-center justify-center bg-white/70 px-3 text-xs text-stone-400 dark:bg-stone-900/70 ${busy ? "animate-pulse" : ""}`}>{busy ? "Stockfish is calculating…" : "Play a move or choose Analyze."}</p> : null}
+            </div>
           </section>
 
           <section className="mt-3 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-700">

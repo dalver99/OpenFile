@@ -14,6 +14,7 @@ export default async function EnginePage() {
     listAnalysisCandidates(200),
     listCollections(),
   ]);
+  const coverage = stats.total ? Math.round((stats.reviewed / stats.total) * 100) : 0;
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-8 sm:px-6 lg:h-[calc(100dvh-4rem)] lg:flex-none lg:overflow-hidden lg:py-8">
@@ -21,6 +22,7 @@ export default async function EnginePage() {
         <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-700 dark:text-brand-400">Work running on this computer</p>
         <h1 className="mt-2 text-3xl font-black tracking-tight text-stone-900 dark:text-white sm:text-4xl">Engine room</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-500">Import individual games, choose what Stockfish reviews, and see exactly what the local worker is doing.</p>
+        <p className="mt-2 text-xs font-semibold text-stone-500"><span className="text-brand-700 dark:text-brand-400">{coverage}% coverage</span> · {stats.reviewed}/{stats.total} games reviewed · {stats.analyzedMoves.toLocaleString()} moves analyzed</p>
       </header>
       <div className="grid min-h-0 flex-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-h-0 lg:h-full lg:overflow-y-auto lg:pr-2">
