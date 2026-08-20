@@ -12,9 +12,11 @@ sidelines, puzzles, and engine analysis stay in SQLite on your own computer.
 > OpenFile is currently alpha software. Back up your database before testing
 > upgrades, and please report setup problems with the output of `openfile doctor`.
 
-## Hosted demo branch
+## Hosted demo
 
-The `vercel` branch runs without SQLite, Python, Stockfish, or private
+Try the [live demo](https://open-file-e5vzr4hb7-dalver99s-projects.vercel.app/automation).
+
+The `demo` branch runs without SQLite, Python, Stockfish, or private
 configuration. It contains a small sanitized archive snapshot: reviews, graphs,
 notation, guided retries, filters, the analysis board, and puzzle solving remain
 interactive, while local-only work is clearly disabled or simulated. See the
